@@ -16,13 +16,32 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@constants/colors';
 import { useWalletStore } from '@store/walletStore';
 import { useState, useCallback } from 'react';
-import { useNativeBalance, useTokenPrices } from '@hooks/useTokens';
+import { useNativeBalance, useTokenPrices, useRefreshData } from '@hooks/useTokens';
 
 const DEMO_ADDRESS = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
-const AGL_USD_PRICE = 0.042; // demo price
+const AGL_USD_PRICE = 0.042;
+
+const ETH_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
+const ENS_REGEX = /^[a-zA-Z0-9-]+\.eth$/;
+
+function isValidAddress(input: string) {
+  return ETH_ADDRESS_REGEX.test(input) || ENS_REGEX.test(input);
+}
 
 function formatAddress(a: string) {
   return `${a.slice(0, 6)}...${a.slice(-4)}`;
+}
+
+async function copyToClipboard(text: string) {
+  if (Platform.OS === 'web') {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 type ActionModal = 'send' | 'receive' | 'swap' | null;
@@ -31,17 +50,18 @@ export default function WalletScreen() {
   const insets = useSafeAreaInsets();
   const { user, isConnected, aglBalance, connect, disconnect, sendAGL, addTransaction } =
     useWalletStore();
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeModal, setActiveModal] = useState<ActionModal>(null);
   const [sendAddress, setSendAddress] = useState('');
   const [sendAmount, setSendAmount] = useState('');
   const [swapFrom, setSwapFrom] = useState<'AGL' | 'ETH'>('AGL');
   const [swapAmount, setSwapAmount] = useState('');
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [addressCopied, setAddressCopied] = useState(false);
 
   const address = user?.address || null;
   const { data: ethBalance } = useNativeBalance(address);
   const { data: prices } = useTokenPrices(['ethereum']);
+  const { refresh, isRefreshing } = useRefreshData();
 
   const ethPrice = prices?.['ethereum']?.usd || 0;
   const ethNum = parseFloat(ethBalance || '0');
@@ -49,24 +69,41 @@ export default function WalletScreen() {
   const aglUSD = aglBalance * AGL_USD_PRICE;
   const totalUSD = ethUSD + aglUSD;
 
-  const onRefresh = useCallback(async () => {
-    setIsRefreshing(true);
-    await new Promise((r) => setTimeout(r, 900));
-    setIsRefreshing(false);
+  const showSuccess = useCallback((msg: string) => {
+    setActionSuccess(msg);
+    setTimeout(() => setActionSuccess(null), 3000);
   }, []);
+
+  const handleCopyAddress = useCallback(async () => {
+    if (!address) return;
+    const ok = await copyToClipboard(address);
+    if (ok) {
+      setAddressCopied(true);
+      setTimeout(() => setAddressCopied(false), 2000);
+    } else {
+      Alert.alert('Wallet Address', address, [
+        { text: 'Close', style: 'cancel' },
+      ]);
+    }
+  }, [address]);
+
+  const sendAddressError =
+    sendAddress.length > 3 && !isValidAddress(sendAddress)
+      ? 'Enter a valid 0x address or ENS name'
+      : null;
 
   const handleSend = useCallback(() => {
     const amount = parseFloat(sendAmount);
     if (!sendAddress || isNaN(amount) || amount <= 0) return;
+    if (!isValidAddress(sendAddress)) return;
     const ok = sendAGL(amount, sendAddress);
     if (ok) {
-      setActionSuccess(`Sent ${amount} AGL to ${formatAddress(sendAddress)}`);
+      showSuccess(`Sent ${amount} AGL to ${formatAddress(sendAddress)}`);
       setSendAddress('');
       setSendAmount('');
       setActiveModal(null);
-      setTimeout(() => setActionSuccess(null), 3000);
     }
-  }, [sendAddress, sendAmount, sendAGL]);
+  }, [sendAddress, sendAmount, sendAGL, showSuccess]);
 
   const handleSwap = useCallback(() => {
     const amount = parseFloat(swapAmount);
@@ -84,11 +121,17 @@ export default function WalletScreen() {
     if (swapFrom === 'AGL') {
       useWalletStore.getState().spendAGL(amount);
     }
-    setActionSuccess(`Swapped ${amount} ${swapFrom} → ${toToken}`);
+    showSuccess(`Swapped ${amount} ${swapFrom} → ${toToken}`);
     setSwapAmount('');
     setActiveModal(null);
-    setTimeout(() => setActionSuccess(null), 3000);
-  }, [swapAmount, swapFrom, aglBalance, addTransaction]);
+  }, [swapAmount, swapFrom, aglBalance, addTransaction, showSuccess]);
+
+  const canSend =
+    !!sendAddress &&
+    !!sendAmount &&
+    !sendAddressError &&
+    parseFloat(sendAmount) > 0 &&
+    parseFloat(sendAmount) <= aglBalance;
 
   return (
     <View style={[styles.container, { paddingTop: Platform.OS === 'web' ? 67 : insets.top }]}>
@@ -97,7 +140,7 @@ export default function WalletScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={Colors.primary} />
+          <RefreshControl refreshing={isRefreshing} onRefresh={refresh} tintColor={Colors.primary} />
         }
       >
         {/* Header */}
@@ -149,10 +192,14 @@ export default function WalletScreen() {
                   </View>
                   <View>
                     <Text style={styles.ensName}>{user?.ensName ?? 'My Wallet'}</Text>
-                    <View style={styles.addressCopyRow}>
+                    <TouchableOpacity style={styles.addressCopyRow} onPress={handleCopyAddress} activeOpacity={0.7}>
                       <Text style={styles.addressText}>{formatAddress(address!)}</Text>
-                      <Ionicons name="copy-outline" size={13} color={Colors.textMuted} />
-                    </View>
+                      <Ionicons
+                        name={addressCopied ? 'checkmark-outline' : 'copy-outline'}
+                        size={13}
+                        color={addressCopied ? Colors.success : Colors.textMuted}
+                      />
+                    </TouchableOpacity>
                   </View>
                 </View>
                 <TouchableOpacity onPress={disconnect} style={styles.logoutBtn}>
@@ -263,7 +310,7 @@ export default function WalletScreen() {
 
             <Text style={styles.inputLabel}>Recipient Address</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, sendAddressError ? styles.inputError : null]}
               value={sendAddress}
               onChangeText={setSendAddress}
               placeholder="0x... or ENS name"
@@ -271,6 +318,9 @@ export default function WalletScreen() {
               autoCapitalize="none"
               autoCorrect={false}
             />
+            {sendAddressError && (
+              <Text style={styles.inputErrorText}>{sendAddressError}</Text>
+            )}
 
             <Text style={styles.inputLabel}>Amount (AGL)</Text>
             <TextInput
@@ -281,6 +331,9 @@ export default function WalletScreen() {
               placeholderTextColor={Colors.textMuted}
               keyboardType="decimal-pad"
             />
+            {parseFloat(sendAmount) > aglBalance && (
+              <Text style={styles.inputErrorText}>Exceeds available balance</Text>
+            )}
 
             {parseFloat(sendAmount) > 0 && (
               <Text style={styles.usdEstimate}>
@@ -293,13 +346,9 @@ export default function WalletScreen() {
                 <Text style={styles.cancelText}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[
-                  styles.confirmBtn,
-                  (!sendAddress || !sendAmount || parseFloat(sendAmount) > aglBalance) &&
-                    styles.confirmBtnDisabled,
-                ]}
+                style={[styles.confirmBtn, !canSend && styles.confirmBtnDisabled]}
                 onPress={handleSend}
-                disabled={!sendAddress || !sendAmount || parseFloat(sendAmount) > aglBalance}
+                disabled={!canSend}
               >
                 <Ionicons name="arrow-up-outline" size={18} color="#fff" />
                 <Text style={styles.confirmText}>Send</Text>
@@ -323,10 +372,15 @@ export default function WalletScreen() {
               </View>
             </View>
 
-            <View style={styles.addressBox}>
+            <TouchableOpacity style={styles.addressBox} onPress={handleCopyAddress} activeOpacity={0.8}>
               <Text style={styles.addressBoxText} selectable>{address}</Text>
-              <Ionicons name="copy-outline" size={18} color={Colors.primary} />
-            </View>
+              <Ionicons
+                name={addressCopied ? 'checkmark-circle' : 'copy-outline'}
+                size={18}
+                color={addressCopied ? Colors.success : Colors.primary}
+              />
+            </TouchableOpacity>
+            {addressCopied && <Text style={styles.copiedText}>Copied!</Text>}
             <Text style={styles.receiveNote}>Only send AGL or ERC-20 tokens on Base network</Text>
 
             <TouchableOpacity style={styles.closeBtnFull} onPress={() => setActiveModal(null)}>
@@ -385,14 +439,17 @@ export default function WalletScreen() {
               placeholderTextColor={Colors.textMuted}
               keyboardType="decimal-pad"
             />
+            {swapFrom === 'AGL' && parseFloat(swapAmount) > aglBalance && (
+              <Text style={styles.inputErrorText}>Exceeds available AGL balance</Text>
+            )}
 
             {parseFloat(swapAmount) > 0 && (
               <View style={styles.swapEstimate}>
                 <Text style={styles.swapEstimateLabel}>You receive ≈</Text>
                 <Text style={styles.swapEstimateValue}>
                   {swapFrom === 'AGL'
-                    ? `${(parseFloat(swapAmount) * AGL_USD_PRICE / ethPrice).toFixed(6)} ETH`
-                    : `${(parseFloat(swapAmount) * ethPrice / AGL_USD_PRICE).toFixed(2)} AGL`}
+                    ? `${(parseFloat(swapAmount) * AGL_USD_PRICE / Math.max(ethPrice, 0.01)).toFixed(6)} ETH`
+                    : `${(parseFloat(swapAmount) * Math.max(ethPrice, 0.01) / AGL_USD_PRICE).toFixed(2)} AGL`}
                 </Text>
               </View>
             )}
@@ -630,17 +687,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
+    gap: 14,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
-    gap: 14,
   },
   assetIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   assetInfo: { flex: 1 },
   assetSymbol: { fontSize: 15, fontWeight: '700', color: Colors.text },
   assetName: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
-  assetRight: { alignItems: 'flex-end' },
-  assetBalance: { fontSize: 15, fontWeight: '600', color: Colors.text },
-  assetValueRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  assetRight: { alignItems: 'flex-end', gap: 3 },
+  assetBalance: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  assetValueRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   assetUSD: { fontSize: 12, color: Colors.textMuted },
   assetChange: { fontSize: 11, fontWeight: '600' },
 
@@ -653,22 +710,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: Colors.accent + '10',
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: Colors.accent + '30',
+    borderColor: Colors.accent + '25',
   },
-  securityText: { fontSize: 12, color: Colors.textSecondary },
+  securityText: { fontSize: 12, color: Colors.accent, fontWeight: '500' },
 
-  // Modals
-  modalWrap: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.7)' },
+  modalWrap: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
   sheet: {
     backgroundColor: Colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     padding: 24,
     paddingBottom: Platform.OS === 'web' ? 40 : 32,
     borderTopWidth: 1,
-    borderColor: Colors.border,
+    borderTopColor: Colors.border,
+    gap: 12,
   },
   sheetHandle: {
     width: 40,
@@ -676,23 +737,26 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: Colors.border,
     alignSelf: 'center',
-    marginBottom: 20,
+    marginBottom: 8,
   },
-  sheetTitle: { fontSize: 20, fontWeight: '700', color: Colors.text, marginBottom: 4 },
-  sheetSub: { fontSize: 13, color: Colors.textMuted, marginBottom: 20 },
-  inputLabel: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', marginBottom: 6, marginTop: 12 },
+  sheetTitle: { fontSize: 20, fontWeight: '700', color: Colors.text },
+  sheetSub: { fontSize: 13, color: Colors.textMuted },
+  inputLabel: { fontSize: 13, color: Colors.textSecondary, fontWeight: '600', marginTop: 4 },
   input: {
     backgroundColor: Colors.surfaceElevated,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontSize: 15,
     color: Colors.text,
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  usdEstimate: { fontSize: 12, color: Colors.textMuted, marginTop: 6 },
-  sheetActions: { flexDirection: 'row', gap: 12, marginTop: 20 },
+  inputError: { borderColor: Colors.error },
+  inputErrorText: { fontSize: 12, color: Colors.error, marginTop: -6 },
+  usdEstimate: { fontSize: 12, color: Colors.textMuted, textAlign: 'right' },
+
+  sheetActions: { flexDirection: 'row', gap: 12, marginTop: 8 },
   cancelBtn: {
     flex: 1,
     alignItems: 'center',
@@ -704,7 +768,7 @@ const styles = StyleSheet.create({
   },
   cancelText: { color: Colors.textSecondary, fontWeight: '600', fontSize: 15 },
   confirmBtn: {
-    flex: 1.5,
+    flex: 2,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -713,22 +777,22 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: Colors.primary,
   },
-  confirmBtnDisabled: { opacity: 0.4 },
+  confirmBtnDisabled: { backgroundColor: Colors.border, opacity: 0.6 },
   confirmText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
   qrPlaceholder: {
     alignItems: 'center',
-    marginVertical: 20,
+    paddingVertical: 12,
   },
   qrInner: {
     width: 160,
     height: 160,
-    borderRadius: 20,
+    borderRadius: 16,
     backgroundColor: Colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: Colors.primary + '40',
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   addressBox: {
     flexDirection: 'row',
@@ -739,52 +803,55 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 8,
+    gap: 12,
   },
-  addressBoxText: { fontSize: 12, color: Colors.textSecondary, flex: 1 },
-  receiveNote: { fontSize: 12, color: Colors.textMuted, textAlign: 'center', marginBottom: 20 },
+  addressBoxText: { fontSize: 12, color: Colors.text, flex: 1, fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
+  copiedText: { fontSize: 12, color: Colors.success, textAlign: 'center', marginTop: -4 },
+  receiveNote: { fontSize: 12, color: Colors.textMuted, textAlign: 'center' },
   closeBtnFull: {
     backgroundColor: Colors.primary,
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
+    marginTop: 4,
   },
   closeBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 
-  swapRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 12 },
-  swapToken: { flex: 1 },
-  swapTokenLabel: { fontSize: 11, color: Colors.textMuted, marginBottom: 6, fontWeight: '600' },
+  swapRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  swapToken: { flex: 1, gap: 6 },
+  swapTokenLabel: { fontSize: 12, color: Colors.textMuted, fontWeight: '600' },
   swapTokenBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     backgroundColor: Colors.surfaceElevated,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: 12,
-    padding: 12,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  swapTokenName: { fontSize: 15, fontWeight: '700', color: Colors.text, flex: 1 },
+  swapTokenName: { flex: 1, fontSize: 15, fontWeight: '700', color: Colors.text },
   swapArrowCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: Colors.gold + '20',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 18,
     borderWidth: 1,
     borderColor: Colors.gold + '40',
+    marginTop: 22,
   },
   swapEstimate: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: Colors.surfaceElevated,
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 8,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   swapEstimateLabel: { fontSize: 13, color: Colors.textMuted },
-  swapEstimateValue: { fontSize: 15, fontWeight: '700', color: Colors.success },
+  swapEstimateValue: { fontSize: 14, fontWeight: '700', color: Colors.text },
 });

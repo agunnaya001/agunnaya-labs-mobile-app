@@ -1,3 +1,4 @@
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -60,11 +61,7 @@ const TYPE_FILTERS: { key: TxType | 'all'; label: string }[] = [
 export default function TransactionsScreen() {
   const insets = useSafeAreaInsets();
   const { isConnected, transactions, arenaStats, aglBalance } = useWalletStore();
-  const [filter, setFilter] = [
-    'all' as TxType | 'all',
-    (v: TxType | 'all') => {},
-  ];
-  const [activeFilter, setActiveFilter] = React.useState<TxType | 'all'>('all');
+  const [activeFilter, setActiveFilter] = useState<TxType | 'all'>('all');
 
   const filtered =
     activeFilter === 'all' ? transactions : transactions.filter((t) => t.type === activeFilter);
@@ -72,8 +69,9 @@ export default function TransactionsScreen() {
   const totalWon = transactions
     .filter((t) => t.type === 'arena_win')
     .reduce((s, t) => s + t.amount, 0);
+
   const totalSpent = transactions
-    .filter((t) => t.type === 'arena_loss' || t.type === 'nft_purchase' || t.type === 'send' || t.type === 'swap')
+    .filter((t) => ['arena_loss', 'nft_purchase', 'send', 'swap'].includes(t.type))
     .reduce((s, t) => s + t.amount, 0);
 
   return (
@@ -167,9 +165,6 @@ export default function TransactionsScreen() {
     </View>
   );
 }
-
-// Need React import for useState
-import React from 'react';
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },

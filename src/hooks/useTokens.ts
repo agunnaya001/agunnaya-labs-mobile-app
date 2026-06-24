@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getTokenBalance, getNativeBalance } from '@services/blockchain';
 import { getTokenPrices } from '@services/tokens';
 import { useWalletStore } from '@store/walletStore';
@@ -12,7 +12,7 @@ export const useTokenBalance = (tokenAddress: string | null, userAddress: string
       return getTokenBalance(tokenAddress, userAddress);
     },
     enabled: !!tokenAddress && !!userAddress,
-    staleTime: 30000, // 30 seconds
+    staleTime: 30000,
   });
 };
 
@@ -36,24 +36,28 @@ export const useTokenPrices = (tokenIds: string[]) => {
       return getTokenPrices(tokenIds);
     },
     enabled: tokenIds.length > 0,
-    staleTime: 60000, // 1 minute
+    staleTime: 60000,
   });
 };
 
 export const useRefreshData = () => {
   const { user } = useWalletStore();
+  const queryClient = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const refresh = useCallback(async () => {
+    if (!user?.address) return;
     setIsRefreshing(true);
     try {
-      // Invalidate queries and refetch
-      // This would typically use TanStack Query's invalidateQueries
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await queryClient.invalidateQueries({ queryKey: ['nativeBalance', user.address] });
+      await queryClient.invalidateQueries({ queryKey: ['tokenBalance'] });
+      await queryClient.invalidateQueries({ queryKey: ['tokenPrices'] });
+      await queryClient.refetchQueries({ queryKey: ['nativeBalance', user.address] });
+      await queryClient.refetchQueries({ queryKey: ['tokenPrices'] });
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [queryClient, user?.address]);
 
   return { refresh, isRefreshing };
 };

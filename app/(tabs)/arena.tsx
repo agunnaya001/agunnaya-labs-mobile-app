@@ -73,7 +73,7 @@ function winProbability(streak: number) {
 
 export default function ArenaScreen() {
   const insets = useSafeAreaInsets();
-  const { user, isConnected, aglBalance, arenaStats, spendAGL, earnAGL, recordWin, recordLoss } =
+  const { user, isConnected, aglBalance, arenaStats, spendAGL, recordWin, recordLoss } =
     useWalletStore();
 
   const [phase, setPhase] = useState<Phase>('lobby');
@@ -82,6 +82,7 @@ export default function ArenaScreen() {
   const [matchmakingDots, setMatchmakingDots] = useState('');
   const [battleCount, setBattleCount] = useState(3);
   const [battlePhase, setBattlePhase] = useState<'countdown' | 'fighting' | 'done'>('countdown');
+  const [currentOpponent, setCurrentOpponent] = useState('');
 
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const shakeAnim = useRef(new Animated.Value(0)).current;
@@ -129,6 +130,8 @@ export default function ArenaScreen() {
   const startMatchmaking = useCallback(
     (tier: (typeof TIERS)[0]) => {
       if (aglBalance < tier.entry) return;
+      const opponent = randomOpponent();
+      setCurrentOpponent(opponent);
       setSelectedTier(tier);
       setPhase('matchmaking');
       spendAGL(tier.entry);
@@ -154,14 +157,12 @@ export default function ArenaScreen() {
 
             setTimeout(() => {
               const won = Math.random() < winProbability(arenaStats.currentStreak);
-              const opponent = randomOpponent();
               const reward = won ? tier.reward : 0;
 
               if (won) {
-                earnAGL(tier.reward);
-                recordWin(tier.reward - tier.entry);
+                recordWin(tier.entry, tier.reward, opponent);
               } else {
-                recordLoss();
+                recordLoss(tier.entry, opponent);
               }
 
               setMatchResult({ won, entryFee: tier.entry, reward, opponent, duration: 42 });
@@ -173,7 +174,7 @@ export default function ArenaScreen() {
         countDown(3);
       }, 3000);
     },
-    [aglBalance, arenaStats.currentStreak, spendAGL, earnAGL, recordWin, recordLoss]
+    [aglBalance, arenaStats.currentStreak, spendAGL, recordWin, recordLoss]
   );
 
   const resetToLobby = useCallback(() => {
@@ -328,7 +329,7 @@ export default function ArenaScreen() {
               <>
                 <Text style={styles.countdownLabel}>Match Starting</Text>
                 <Text style={styles.countdown}>{battleCount || 'GO!'}</Text>
-                <Text style={styles.modalSub}>vs. {randomOpponent()}</Text>
+                <Text style={styles.modalSub}>vs. {currentOpponent}</Text>
               </>
             ) : (
               <>
@@ -342,7 +343,7 @@ export default function ArenaScreen() {
                   </View>
                   <View style={styles.fighterCard}>
                     <Ionicons name="person" size={32} color={Colors.error} />
-                    <Text style={styles.fighterName}>Opponent</Text>
+                    <Text style={styles.fighterName}>{currentOpponent}</Text>
                   </View>
                 </View>
                 <Text style={styles.battleStatus}>⚔️ Battle in progress...</Text>
@@ -411,9 +412,7 @@ export default function ArenaScreen() {
                 <Text
                   style={[
                     styles.netGainValue,
-                    {
-                      color: matchResult?.won ? Colors.success : Colors.error,
-                    },
+                    { color: matchResult?.won ? Colors.success : Colors.error },
                   ]}
                 >
                   {matchResult?.won
@@ -440,7 +439,10 @@ export default function ArenaScreen() {
 
             {/* Actions */}
             <View style={styles.resultActions}>
-              <TouchableOpacity style={styles.rematchBtn} onPress={() => selectedTier && startMatchmaking(selectedTier)}>
+              <TouchableOpacity
+                style={styles.rematchBtn}
+                onPress={() => selectedTier && startMatchmaking(selectedTier)}
+              >
                 <Ionicons name="refresh" size={18} color="#fff" />
                 <Text style={styles.rematchText}>Rematch</Text>
               </TouchableOpacity>
@@ -624,11 +626,11 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     backgroundColor: Colors.surface,
     borderRadius: 24,
-    padding: 32,
+    padding: 28,
     alignItems: 'center',
+    gap: 16,
     borderWidth: 1,
     borderColor: Colors.border,
-    gap: 16,
   },
   matchmakingOrb: {
     width: 80,
@@ -639,84 +641,72 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modalTitle: { fontSize: 20, fontWeight: '700', color: Colors.text },
-  modalSub: { fontSize: 14, color: Colors.textSecondary },
+  modalSub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
   matchmakingBar: {
     width: '100%',
-    height: 6,
+    height: 4,
     backgroundColor: Colors.border,
-    borderRadius: 3,
+    borderRadius: 2,
     overflow: 'hidden',
-    marginTop: 4,
   },
   matchmakingFill: {
     height: '100%',
     backgroundColor: Colors.primary,
-    borderRadius: 3,
+    borderRadius: 2,
   },
 
-  countdownLabel: { fontSize: 14, color: Colors.textSecondary, fontWeight: '600' },
-  countdown: { fontSize: 80, fontWeight: '900', color: Colors.text, lineHeight: 90 },
+  countdownLabel: { fontSize: 16, color: Colors.textSecondary, fontWeight: '600' },
+  countdown: { fontSize: 72, fontWeight: '900', color: Colors.text },
 
-  battleVs: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-    width: '100%',
-    justifyContent: 'center',
-  },
-  fighterCard: {
-    alignItems: 'center',
-    gap: 6,
-    flex: 1,
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: 16,
-    padding: 16,
-  },
-  fighterName: { fontSize: 13, fontWeight: '600', color: Colors.text, textAlign: 'center' },
+  battleVs: { flexDirection: 'row', alignItems: 'center', gap: 16, width: '100%', justifyContent: 'center' },
+  fighterCard: { alignItems: 'center', gap: 8, flex: 1 },
+  fighterName: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', textAlign: 'center' },
   vsCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.border,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.gold + '20',
+    borderWidth: 1,
+    borderColor: Colors.gold + '60',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  vsText: { fontSize: 14, fontWeight: '800', color: Colors.textSecondary },
-  battleStatus: { fontSize: 16, fontWeight: '600', color: Colors.text },
+  vsText: { fontSize: 14, fontWeight: '900', color: Colors.gold },
+  battleStatus: { fontSize: 15, color: Colors.textSecondary },
   battleBars: { width: '100%', gap: 8 },
-  battleBar: { height: 8, borderRadius: 4, width: '100%', overflow: 'hidden' },
+  battleBar: { width: '100%', height: 8, borderRadius: 4, overflow: 'hidden' },
   battleBarFill: { height: '100%', borderRadius: 4 },
 
   resultCard: {
     width: '100%',
-    maxWidth: 380,
-    backgroundColor: Colors.surface,
+    maxWidth: 360,
     borderRadius: 24,
     overflow: 'hidden',
-    borderWidth: 1.5,
+    borderWidth: 1,
   },
-  resultCardWin: { borderColor: Colors.success + '60' },
-  resultCardLoss: { borderColor: Colors.error + '40' },
+  resultCardWin: { backgroundColor: Colors.surface, borderColor: Colors.success + '60' },
+  resultCardLoss: { backgroundColor: Colors.surface, borderColor: Colors.error + '60' },
   resultBannerWin: {
-    backgroundColor: Colors.success + '25',
-    paddingVertical: 20,
+    backgroundColor: Colors.success + '20',
+    padding: 20,
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     borderBottomWidth: 1,
     borderBottomColor: Colors.success + '30',
   },
   resultBannerLoss: {
-    backgroundColor: Colors.error + '15',
-    paddingVertical: 20,
+    backgroundColor: Colors.error + '20',
+    padding: 20,
     alignItems: 'center',
-    gap: 6,
+    gap: 4,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.error + '20',
+    borderBottomColor: Colors.error + '30',
   },
-  resultEmoji: { fontSize: 44 },
-  resultTitle: { fontSize: 26, fontWeight: '900', color: Colors.text, letterSpacing: 2 },
+  resultEmoji: { fontSize: 36 },
+  resultTitle: { fontSize: 24, fontWeight: '900', color: Colors.text, letterSpacing: 2 },
+
   resultBody: { padding: 20, gap: 14 },
-  resultOpponent: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
+  resultOpponent: { fontSize: 14, color: Colors.textMuted, textAlign: 'center' },
 
   aglFlow: {
     flexDirection: 'row',
@@ -724,49 +714,42 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: Colors.surfaceElevated,
     borderRadius: 14,
-    padding: 16,
-    gap: 8,
+    padding: 14,
   },
-  aglFlowItem: { alignItems: 'center', flex: 1 },
-  aglFlowLabel: { fontSize: 12, color: Colors.textMuted, marginBottom: 4 },
-  aglFlowValue: { fontSize: 17, fontWeight: '700' },
+  aglFlowItem: { alignItems: 'center', gap: 4 },
+  aglFlowLabel: { fontSize: 11, color: Colors.textMuted },
+  aglFlowValue: { fontSize: 16, fontWeight: '700' },
 
   netGain: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 4,
   },
-  netGainLabel: { fontSize: 14, color: Colors.textSecondary, fontWeight: '500' },
-  netGainValue: { fontSize: 20, fontWeight: '800' },
+  netGainLabel: { fontSize: 14, color: Colors.textSecondary, fontWeight: '600' },
+  netGainValue: { fontSize: 22, fontWeight: '800' },
 
   newBalanceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     justifyContent: 'center',
+    backgroundColor: Colors.primary + '10',
+    paddingVertical: 10,
+    borderRadius: 10,
   },
-  newBalanceText: { fontSize: 13, color: Colors.textSecondary },
+  newBalanceText: { fontSize: 14, color: Colors.primary, fontWeight: '600' },
 
   streakBanner: {
-    backgroundColor: Colors.error + '20',
+    backgroundColor: Colors.error + '15',
     borderRadius: 10,
     padding: 10,
-    alignItems: 'center',
     borderWidth: 1,
-    borderColor: Colors.error + '40',
+    borderColor: Colors.error + '30',
   },
-  streakBannerText: { fontSize: 13, fontWeight: '600', color: Colors.error },
+  streakBannerText: { fontSize: 13, color: Colors.error, textAlign: 'center', fontWeight: '600' },
 
-  resultActions: {
-    flexDirection: 'row',
-    gap: 12,
-    padding: 20,
-    paddingTop: 0,
-  },
+  resultActions: { flexDirection: 'row', gap: 12, padding: 20, paddingTop: 0 },
   rematchBtn: {
     flex: 1,
     flexDirection: 'row',
