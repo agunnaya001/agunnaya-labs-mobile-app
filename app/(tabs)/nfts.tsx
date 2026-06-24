@@ -303,7 +303,7 @@ export default function NFTsScreen() {
               {[
                 { label: 'Arena Champion NFT', address: NFT_ADDRESSES.ARENA_CHAMPION, color: Colors.primary },
                 { label: 'AGL Token', address: '0xEA1221B4d80A89BD8C75248Fae7c176BD1854698', color: Colors.gold },
-                { label: 'ARNA Token', address: '0x3b855F88CB93aA642EaEB13F59987C552Fc614b5', color: Colors.accent },
+                { label: 'ARENA Token', address: '0x3b855F88CB93aA642EaEB13F59987C552Fc614b5', color: Colors.accent },
                 { label: 'Marketplace', address: ARENA_ADDRESSES.MARKETPLACE, color: Colors.success },
                 { label: 'Arena PVE', address: ARENA_ADDRESSES.PVE, color: Colors.info },
                 { label: 'Arena PVP', address: ARENA_ADDRESSES.PVP, color: Colors.error },

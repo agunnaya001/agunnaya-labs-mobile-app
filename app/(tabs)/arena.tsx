@@ -7,22 +7,25 @@ import {
   Platform,
   Modal,
   Animated,
-  Easing,
+  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@constants/colors';
 import { useWalletStore } from '@store/walletStore';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { ARENA_ADDRESSES } from '@config/contracts';
+
+const BASE_EXPLORER = 'https://basescan.org/address/';
 
 type Phase = 'lobby' | 'matchmaking' | 'battle' | 'result';
+type ArenaTab = 'play' | 'leaderboard';
 
 interface MatchResult {
   won: boolean;
   entryFee: number;
   reward: number;
   opponent: string;
-  duration: number;
 }
 
 const TIERS = [
@@ -61,14 +64,24 @@ const FAKE_OPPONENTS = [
   'GLadius.eth', 'NightOwl.eth', '0xF44c...8aE3', 'ArenaMaster',
 ];
 
+const MOCK_LEADERBOARD = [
+  { rank: 1, name: 'CryptoKing.eth',   wins: 247, losses: 89,  earned: 4820, streak: 12 },
+  { rank: 2, name: '0xF44c...8aE3',    wins: 198, losses: 71,  earned: 3960, streak: 7  },
+  { rank: 3, name: 'NightOwl.eth',     wins: 183, losses: 94,  earned: 3410, streak: 5  },
+  { rank: 4, name: 'GLadius.eth',      wins: 156, losses: 88,  earned: 2890, streak: 3  },
+  { rank: 5, name: 'ArenaLegend',      wins: 134, losses: 67,  earned: 2540, streak: 8  },
+  { rank: 6, name: '0xBe91...22cF',    wins: 121, losses: 80,  earned: 2100, streak: 2  },
+  { rank: 7, name: 'vitalik.eth',      wins: 118, losses: 55,  earned: 1980, streak: 4  },
+  { rank: 8, name: 'CryptoArena99',    wins: 102, losses: 78,  earned: 1740, streak: 1  },
+  { rank: 9, name: '0xA3f2...4d1B',    wins: 97,  losses: 62,  earned: 1620, streak: 0  },
+  { rank: 10, name: 'StormRider.eth',  wins: 88,  losses: 54,  earned: 1430, streak: 6  },
+];
+
 function randomOpponent() {
   return FAKE_OPPONENTS[Math.floor(Math.random() * FAKE_OPPONENTS.length)];
 }
-
 function winProbability(streak: number) {
-  const base = 0.52;
-  const bonus = Math.min(streak * 0.03, 0.12);
-  return base + bonus;
+  return Math.min(0.52 + streak * 0.03, 0.64);
 }
 
 export default function ArenaScreen() {
@@ -76,6 +89,7 @@ export default function ArenaScreen() {
   const { user, isConnected, aglBalance, arenaStats, spendAGL, recordWin, recordLoss } =
     useWalletStore();
 
+  const [activeTab, setActiveTab] = useState<ArenaTab>('play');
   const [phase, setPhase] = useState<Phase>('lobby');
   const [selectedTier, setSelectedTier] = useState<(typeof TIERS)[0] | null>(null);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
@@ -94,12 +108,13 @@ export default function ArenaScreen() {
       ? Math.round((arenaStats.wins / (arenaStats.wins + arenaStats.losses)) * 100)
       : 0;
 
+  const totalGames = arenaStats.wins + arenaStats.losses;
+  const netPL = arenaStats.totalEarned;
+
   useEffect(() => {
     if (phase === 'matchmaking') {
-      const interval = setInterval(() => {
-        setMatchmakingDots((d) => (d.length >= 3 ? '' : d + '.'));
-      }, 500);
-      return () => clearInterval(interval);
+      const i = setInterval(() => setMatchmakingDots((d) => (d.length >= 3 ? '' : d + '.')), 500);
+      return () => clearInterval(i);
     }
   }, [phase]);
 
@@ -109,7 +124,7 @@ export default function ArenaScreen() {
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1.15, duration: 800, useNativeDriver: true }),
           Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
-        ])
+        ]),
       ).start();
     } else {
       pulseAnim.setValue(1);
@@ -157,15 +172,12 @@ export default function ArenaScreen() {
 
             setTimeout(() => {
               const won = Math.random() < winProbability(arenaStats.currentStreak);
-              const reward = won ? tier.reward : 0;
-
               if (won) {
                 recordWin(tier.entry, tier.reward, opponent);
               } else {
                 recordLoss(tier.entry, opponent);
               }
-
-              setMatchResult({ won, entryFee: tier.entry, reward, opponent, duration: 42 });
+              setMatchResult({ won, entryFee: tier.entry, reward: won ? tier.reward : 0, opponent });
               setBattlePhase('done');
               setPhase('result');
             }, 2500);
@@ -174,7 +186,7 @@ export default function ArenaScreen() {
         countDown(3);
       }, 3000);
     },
-    [aglBalance, arenaStats.currentStreak, spendAGL, recordWin, recordLoss]
+    [aglBalance, arenaStats.currentStreak, spendAGL, recordWin, recordLoss],
   );
 
   const resetToLobby = useCallback(() => {
@@ -186,117 +198,227 @@ export default function ArenaScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: Platform.OS === 'web' ? 67 : insets.top }]}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>Arena</Text>
+          <Text style={styles.headerSub}>Stake AGL · Fight · Earn</Text>
+        </View>
+        <View style={styles.headerRight}>
+          {isConnected && (
+            <View style={styles.balancePill}>
+              <Ionicons name="diamond" size={13} color={Colors.primary} />
+              <Text style={styles.balanceText}>{aglBalance.toLocaleString()} AGL</Text>
+            </View>
+          )}
+          <TouchableOpacity onPress={() => Linking.openURL(BASE_EXPLORER + ARENA_ADDRESSES.PVE)} style={styles.chainBtn}>
+            <Ionicons name="link-outline" size={15} color={Colors.accent} />
+            <Text style={styles.chainBtnText}>On-chain</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Tab bar */}
+      <View style={styles.tabBar}>
+        {(['play', 'leaderboard'] as ArenaTab[]).map((t) => (
+          <TouchableOpacity
+            key={t}
+            style={[styles.tabBtn, activeTab === t && styles.tabBtnActive]}
+            onPress={() => setActiveTab(t)}
+          >
+            <Ionicons
+              name={t === 'play' ? 'game-controller-outline' : 'trophy-outline'}
+              size={15}
+              color={activeTab === t ? '#fff' : Colors.textMuted}
+            />
+            <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
+              {t === 'play' ? 'Play' : 'Leaderboard'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>Arena</Text>
-            <Text style={styles.headerSub}>Stake AGL · Fight · Earn</Text>
-          </View>
-          <View style={styles.balancePill}>
-            <Ionicons name="diamond" size={14} color={Colors.primary} />
-            <Text style={styles.balanceText}>{aglBalance.toLocaleString()} AGL</Text>
-          </View>
-        </View>
-
-        {!isConnected ? (
-          <View style={styles.connectBox}>
-            <Ionicons name="game-controller" size={52} color={Colors.primary} />
-            <Text style={styles.connectTitle}>Connect to Play</Text>
-            <Text style={styles.connectSub}>Connect your wallet to enter the Arena</Text>
-          </View>
-        ) : (
+        {activeTab === 'play' ? (
           <>
-            {/* Stats bar */}
-            <View style={styles.statsBar}>
-              <StatPill label="Level" value={`Lv.${arenaStats.level}`} color={Colors.primary} />
-              <StatPill label="Wins" value={String(arenaStats.wins)} color={Colors.success} />
-              <StatPill label="Losses" value={String(arenaStats.losses)} color={Colors.error} />
-              <StatPill label="Win Rate" value={`${winRate}%`} color={Colors.gold} />
-              {arenaStats.currentStreak > 0 && (
-                <StatPill label="Streak" value={`${arenaStats.currentStreak}🔥`} color={Colors.error} />
-              )}
-            </View>
-
-            {/* Tier cards */}
-            <Text style={styles.sectionTitle}>Choose Your Tier</Text>
-            {TIERS.map((tier) => {
-              const canAfford = aglBalance >= tier.entry;
-              return (
-                <TouchableOpacity
-                  key={tier.label}
-                  style={[
-                    styles.tierCard,
-                    { borderColor: tier.color + '50' },
-                    !canAfford && styles.tierCardDisabled,
-                    tier.popular && styles.tierCardPopular,
-                  ]}
-                  onPress={() => canAfford && startMatchmaking(tier)}
-                  disabled={!canAfford}
-                  activeOpacity={0.8}
-                >
-                  {tier.popular && (
-                    <View style={[styles.popularBadge, { backgroundColor: tier.color }]}>
-                      <Text style={styles.popularText}>POPULAR</Text>
-                    </View>
+            {!isConnected ? (
+              <View style={styles.connectBox}>
+                <Ionicons name="game-controller" size={52} color={Colors.primary} />
+                <Text style={styles.connectTitle}>Connect to Play</Text>
+                <Text style={styles.connectSub}>Connect your wallet to enter the Arena</Text>
+              </View>
+            ) : (
+              <>
+                {/* Stats bar */}
+                <View style={styles.statsBar}>
+                  <StatPill label="Level" value={`Lv.${arenaStats.level}`} color={Colors.primary} />
+                  <StatPill label="Record" value={`${arenaStats.wins}W-${arenaStats.losses}L`} color={Colors.text} />
+                  <StatPill label="Win Rate" value={`${winRate}%`} color={Colors.gold} />
+                  <StatPill label="Net P&L" value={`${netPL >= 0 ? '+' : ''}${netPL} AGL`} color={netPL >= 0 ? Colors.success : Colors.error} />
+                  {arenaStats.currentStreak > 0 && (
+                    <StatPill label="Streak" value={`${arenaStats.currentStreak}🔥`} color={Colors.error} />
                   )}
-                  <View style={styles.tierLeft}>
-                    <View style={[styles.tierIcon, { backgroundColor: tier.color + '20' }]}>
-                      <Ionicons name={tier.icon} size={26} color={tier.color} />
-                    </View>
-                    <View>
-                      <Text style={[styles.tierLabel, { color: tier.color }]}>{tier.label}</Text>
-                      <Text style={styles.tierDesc}>{tier.desc}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.tierRight}>
-                    <View style={styles.tierFeeRow}>
-                      <Ionicons name="diamond-outline" size={13} color={Colors.textMuted} />
-                      <Text style={styles.tierFee}>{tier.entry} AGL</Text>
-                    </View>
-                    <Text style={styles.tierReward}>Win {tier.reward} AGL</Text>
-                    <Text style={[styles.tierMultiplier, { color: tier.color }]}>{tier.multiplier}</Text>
-                  </View>
-                  {!canAfford && (
-                    <View style={styles.insufficientOverlay}>
-                      <Text style={styles.insufficientText}>Insufficient AGL</Text>
-                    </View>
+                  {arenaStats.bestStreak > 0 && (
+                    <StatPill label="Best" value={`${arenaStats.bestStreak}⚡`} color={Colors.gold} />
                   )}
-                </TouchableOpacity>
-              );
-            })}
+                </View>
 
-            {/* How it works */}
-            <Text style={styles.sectionTitle}>How It Works</Text>
-            <View style={styles.howItWorks}>
-              {[
-                { icon: 'diamond-outline' as const, text: 'Stake AGL to enter a match', color: Colors.primary },
-                { icon: 'game-controller-outline' as const, text: 'Get matched with an opponent', color: Colors.accent },
-                { icon: 'trophy-outline' as const, text: 'Win and earn AGL rewards', color: Colors.gold },
-              ].map((step, i) => (
-                <View key={i} style={styles.howStep}>
-                  <View style={[styles.howIcon, { backgroundColor: step.color + '20' }]}>
-                    <Ionicons name={step.icon} size={20} color={step.color} />
+                {/* Tier cards */}
+                <Text style={styles.sectionTitle}>Choose Your Tier</Text>
+                {TIERS.map((tier) => {
+                  const canAfford = aglBalance >= tier.entry;
+                  return (
+                    <TouchableOpacity
+                      key={tier.label}
+                      style={[
+                        styles.tierCard,
+                        { borderColor: tier.color + '50' },
+                        !canAfford && styles.tierCardDisabled,
+                        tier.popular && styles.tierCardPopular,
+                      ]}
+                      onPress={() => canAfford && startMatchmaking(tier)}
+                      disabled={!canAfford}
+                      activeOpacity={0.8}
+                    >
+                      {tier.popular && (
+                        <View style={[styles.popularBadge, { backgroundColor: tier.color }]}>
+                          <Text style={styles.popularText}>POPULAR</Text>
+                        </View>
+                      )}
+                      <View style={styles.tierLeft}>
+                        <View style={[styles.tierIcon, { backgroundColor: tier.color + '20' }]}>
+                          <Ionicons name={tier.icon} size={26} color={tier.color} />
+                        </View>
+                        <View>
+                          <Text style={[styles.tierLabel, { color: tier.color }]}>{tier.label}</Text>
+                          <Text style={styles.tierDesc}>{tier.desc}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.tierRight}>
+                        <Text style={styles.tierFee}>{tier.entry} AGL entry</Text>
+                        <Text style={styles.tierReward}>Win {tier.reward} AGL</Text>
+                        <Text style={[styles.tierMultiplier, { color: tier.color }]}>{tier.multiplier}</Text>
+                      </View>
+                      {!canAfford && (
+                        <View style={styles.insufficientOverlay}>
+                          <Text style={styles.insufficientText}>Insufficient AGL</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {/* Contract info */}
+                <View style={styles.contractsCard}>
+                  <Text style={styles.contractsTitle}>Live on Base · Arena Contracts</Text>
+                  <View style={styles.contractsRow}>
+                    {[
+                      { label: 'PVE', address: ARENA_ADDRESSES.PVE, color: Colors.accent },
+                      { label: 'PVP', address: ARENA_ADDRESSES.PVP, color: Colors.primary },
+                      { label: 'Market', address: ARENA_ADDRESSES.MARKETPLACE, color: Colors.gold },
+                    ].map((c) => (
+                      <TouchableOpacity
+                        key={c.label}
+                        style={[styles.contractChip, { borderColor: c.color + '40' }]}
+                        onPress={() => Linking.openURL(BASE_EXPLORER + c.address)}
+                      >
+                        <View style={[styles.contractChipDot, { backgroundColor: c.color }]} />
+                        <Text style={[styles.contractChipText, { color: c.color }]}>{c.label} ↗</Text>
+                      </TouchableOpacity>
+                    ))}
                   </View>
-                  <Text style={styles.howText}>{step.text}</Text>
+                </View>
+
+                {/* Earnings banner */}
+                {arenaStats.totalEarned > 0 && (
+                  <View style={styles.earningsCard}>
+                    <Ionicons name="trending-up" size={20} color={Colors.success} />
+                    <View style={styles.earningsInfo}>
+                      <Text style={styles.earningsLabel}>Total Earned</Text>
+                      <Text style={styles.earningsValue}>+{arenaStats.totalEarned} AGL</Text>
+                    </View>
+                    <View style={styles.earningsInfo}>
+                      <Text style={styles.earningsLabel}>Games Played</Text>
+                      <Text style={styles.earningsValue}>{totalGames}</Text>
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+          </>
+        ) : (
+          /* ── Leaderboard Tab ─────────────────────────────── */
+          <>
+            <Text style={styles.leaderboardTitle}>Top Fighters · All Time</Text>
+
+            {/* Player's position card */}
+            {isConnected && totalGames > 0 && (
+              <View style={styles.myRankCard}>
+                <View style={styles.myRankLeft}>
+                  <Text style={styles.myRankLabel}>Your Rank</Text>
+                  <Text style={styles.myRankValue}>#{Math.max(1, 11 - Math.floor(arenaStats.wins / 10))}</Text>
+                </View>
+                <View style={styles.myRankDivider} />
+                <View style={styles.myRankStat}>
+                  <Text style={styles.myRankStatLabel}>Wins</Text>
+                  <Text style={styles.myRankStatValue}>{arenaStats.wins}</Text>
+                </View>
+                <View style={styles.myRankStat}>
+                  <Text style={styles.myRankStatLabel}>Win Rate</Text>
+                  <Text style={styles.myRankStatValue}>{winRate}%</Text>
+                </View>
+                <View style={styles.myRankStat}>
+                  <Text style={styles.myRankStatLabel}>Earned</Text>
+                  <Text style={[styles.myRankStatValue, { color: Colors.success }]}>
+                    +{arenaStats.totalEarned}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Leaderboard list */}
+            <View style={styles.leaderboardList}>
+              <View style={styles.leaderboardHeader}>
+                <Text style={[styles.leaderboardHeaderText, { flex: 0.3 }]}>#</Text>
+                <Text style={[styles.leaderboardHeaderText, { flex: 1 }]}>Player</Text>
+                <Text style={[styles.leaderboardHeaderText, { textAlign: 'right' }]}>W/L</Text>
+                <Text style={[styles.leaderboardHeaderText, { textAlign: 'right', flex: 0.9 }]}>Earned</Text>
+              </View>
+              {MOCK_LEADERBOARD.map((entry) => (
+                <View key={entry.rank} style={[styles.leaderboardRow, entry.rank <= 3 && styles.leaderboardRowTop]}>
+                  <View style={styles.leaderboardRankWrap}>
+                    {entry.rank === 1 ? (
+                      <Text style={styles.rankEmoji}>🥇</Text>
+                    ) : entry.rank === 2 ? (
+                      <Text style={styles.rankEmoji}>🥈</Text>
+                    ) : entry.rank === 3 ? (
+                      <Text style={styles.rankEmoji}>🥉</Text>
+                    ) : (
+                      <Text style={styles.leaderboardRank}>{entry.rank}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.leaderboardName} numberOfLines={1}>{entry.name}</Text>
+                    {entry.streak > 0 && (
+                      <Text style={styles.leaderboardStreak}>{entry.streak}🔥 streak</Text>
+                    )}
+                  </View>
+                  <Text style={styles.leaderboardWL}>{entry.wins}/{entry.losses}</Text>
+                  <Text style={styles.leaderboardEarned}>+{entry.earned}</Text>
                 </View>
               ))}
             </View>
 
-            {/* Recent earnings */}
-            {arenaStats.totalEarned > 0 && (
-              <View style={styles.earningsCard}>
-                <Ionicons name="trending-up" size={20} color={Colors.success} />
-                <View style={styles.earningsInfo}>
-                  <Text style={styles.earningsLabel}>Total Earned This Session</Text>
-                  <Text style={styles.earningsValue}>+{arenaStats.totalEarned} AGL</Text>
-                </View>
-              </View>
-            )}
+            <View style={styles.leaderboardNote}>
+              <Ionicons name="information-circle-outline" size={14} color={Colors.textMuted} />
+              <Text style={styles.leaderboardNoteText}>
+                Leaderboard updates every 10 minutes · Play more to rank up
+              </Text>
+            </View>
           </>
         )}
       </ScrollView>
@@ -313,7 +435,7 @@ export default function ArenaScreen() {
               Entry fee: <Text style={{ color: Colors.primary, fontWeight: '700' }}>{selectedTier?.entry} AGL</Text> staked
             </Text>
             <View style={styles.matchmakingBar}>
-              <Animated.View style={[styles.matchmakingFill, { width: '75%' }]} />
+              <View style={styles.matchmakingFill} />
             </View>
           </View>
         </View>
@@ -322,9 +444,7 @@ export default function ArenaScreen() {
       {/* Battle Modal */}
       <Modal visible={phase === 'battle'} transparent animationType="fade">
         <View style={styles.overlay}>
-          <Animated.View
-            style={[styles.modalCard, { transform: [{ translateX: shakeAnim }] }]}
-          >
+          <Animated.View style={[styles.modalCard, { transform: [{ translateX: shakeAnim }] }]}>
             {battlePhase === 'countdown' ? (
               <>
                 <Text style={styles.countdownLabel}>Match Starting</Text>
@@ -338,9 +458,7 @@ export default function ArenaScreen() {
                     <Ionicons name="person" size={32} color={Colors.primary} />
                     <Text style={styles.fighterName}>{user?.ensName || 'You'}</Text>
                   </View>
-                  <View style={styles.vsCircle}>
-                    <Text style={styles.vsText}>VS</Text>
-                  </View>
+                  <View style={styles.vsCircle}><Text style={styles.vsText}>VS</Text></View>
                   <View style={styles.fighterCard}>
                     <Ionicons name="person" size={32} color={Colors.error} />
                     <Text style={styles.fighterName}>{currentOpponent}</Text>
@@ -349,10 +467,10 @@ export default function ArenaScreen() {
                 <Text style={styles.battleStatus}>⚔️ Battle in progress...</Text>
                 <View style={styles.battleBars}>
                   <View style={[styles.battleBar, { backgroundColor: Colors.primary + '40' }]}>
-                    <Animated.View style={[styles.battleBarFill, { width: '62%', backgroundColor: Colors.primary }]} />
+                    <View style={[styles.battleBarFill, { width: '62%', backgroundColor: Colors.primary }]} />
                   </View>
                   <View style={[styles.battleBar, { backgroundColor: Colors.error + '40' }]}>
-                    <Animated.View style={[styles.battleBarFill, { width: '38%', backgroundColor: Colors.error }]} />
+                    <View style={[styles.battleBarFill, { width: '38%', backgroundColor: Colors.error }]} />
                   </View>
                 </View>
               </>
@@ -371,7 +489,6 @@ export default function ArenaScreen() {
               { opacity: fadeAnim, transform: [{ scale: scaleAnim }] },
             ]}
           >
-            {/* Result header */}
             <View style={matchResult?.won ? styles.resultBannerWin : styles.resultBannerLoss}>
               <Text style={styles.resultEmoji}>{matchResult?.won ? '🏆' : '💀'}</Text>
               <Text style={styles.resultTitle}>{matchResult?.won ? 'VICTORY' : 'DEFEAT'}</Text>
@@ -380,13 +497,10 @@ export default function ArenaScreen() {
             <View style={styles.resultBody}>
               <Text style={styles.resultOpponent}>vs. {matchResult?.opponent}</Text>
 
-              {/* AGL flow */}
               <View style={styles.aglFlow}>
                 <View style={styles.aglFlowItem}>
                   <Text style={styles.aglFlowLabel}>Entry Fee</Text>
-                  <Text style={[styles.aglFlowValue, { color: Colors.error }]}>
-                    −{matchResult?.entryFee} AGL
-                  </Text>
+                  <Text style={[styles.aglFlowValue, { color: Colors.error }]}>−{matchResult?.entryFee} AGL</Text>
                 </View>
                 <Ionicons
                   name={matchResult?.won ? 'arrow-forward' : 'close'}
@@ -395,54 +509,40 @@ export default function ArenaScreen() {
                 />
                 <View style={styles.aglFlowItem}>
                   <Text style={styles.aglFlowLabel}>{matchResult?.won ? 'Reward' : 'Lost'}</Text>
-                  <Text
-                    style={[
-                      styles.aglFlowValue,
-                      { color: matchResult?.won ? Colors.success : Colors.textMuted },
-                    ]}
-                  >
+                  <Text style={[styles.aglFlowValue, { color: matchResult?.won ? Colors.success : Colors.textMuted }]}>
                     {matchResult?.won ? `+${matchResult.reward}` : '0'} AGL
                   </Text>
                 </View>
               </View>
 
-              {/* Net gain */}
               <View style={styles.netGain}>
                 <Text style={styles.netGainLabel}>Net P&L</Text>
-                <Text
-                  style={[
-                    styles.netGainValue,
-                    { color: matchResult?.won ? Colors.success : Colors.error },
-                  ]}
-                >
+                <Text style={[styles.netGainValue, { color: matchResult?.won ? Colors.success : Colors.error }]}>
                   {matchResult?.won
                     ? `+${(matchResult.reward - matchResult.entryFee).toFixed(0)} AGL`
                     : `−${matchResult?.entryFee} AGL`}
                 </Text>
               </View>
 
-              {/* Updated balance */}
               <View style={styles.newBalanceRow}>
                 <Ionicons name="diamond" size={14} color={Colors.primary} />
                 <Text style={styles.newBalanceText}>New balance: {aglBalance.toLocaleString()} AGL</Text>
               </View>
 
-              {/* Streak */}
               {matchResult?.won && arenaStats.currentStreak > 1 && (
                 <View style={styles.streakBanner}>
-                  <Text style={styles.streakBannerText}>
-                    🔥 {arenaStats.currentStreak} Win Streak! Win rate bonus active
-                  </Text>
+                  <Text style={styles.streakBannerText}>🔥 {arenaStats.currentStreak} Win Streak! Bonus win rate active</Text>
+                </View>
+              )}
+              {matchResult?.won && arenaStats.currentStreak >= arenaStats.bestStreak && arenaStats.bestStreak > 1 && (
+                <View style={[styles.streakBanner, { backgroundColor: Colors.gold + '15', borderColor: Colors.gold + '30' }]}>
+                  <Text style={[styles.streakBannerText, { color: Colors.gold }]}>⚡ New personal best streak!</Text>
                 </View>
               )}
             </View>
 
-            {/* Actions */}
             <View style={styles.resultActions}>
-              <TouchableOpacity
-                style={styles.rematchBtn}
-                onPress={() => selectedTier && startMatchmaking(selectedTier)}
-              >
+              <TouchableOpacity style={styles.rematchBtn} onPress={() => selectedTier && startMatchmaking(selectedTier)}>
                 <Ionicons name="refresh" size={18} color="#fff" />
                 <Text style={styles.rematchText}>Rematch</Text>
               </TouchableOpacity>
@@ -472,188 +572,165 @@ const styles = StyleSheet.create({
   content: { paddingBottom: Platform.OS === 'web' ? 34 : 24 },
 
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8,
   },
   headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
   headerSub: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
+  headerRight: { alignItems: 'flex-end', gap: 6 },
   balancePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: Colors.primary + '20',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.primary + '40',
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: Colors.primary + '20', paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: 16, borderWidth: 1, borderColor: Colors.primary + '40',
   },
-  balanceText: { fontSize: 14, fontWeight: '700', color: Colors.primary },
+  balanceText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
+  chainBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.accent + '10', paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 8, borderWidth: 1, borderColor: Colors.accent + '30',
+  },
+  chainBtnText: { fontSize: 11, color: Colors.accent, fontWeight: '600' },
 
-  connectBox: {
-    marginHorizontal: 20,
-    marginTop: 60,
-    alignItems: 'center',
-    gap: 12,
+  tabBar: {
+    flexDirection: 'row', marginHorizontal: 20, marginBottom: 4,
+    backgroundColor: Colors.surface, borderRadius: 14, padding: 4,
+    borderWidth: 1, borderColor: Colors.border,
   },
+  tabBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: 10 },
+  tabBtnActive: { backgroundColor: Colors.primary },
+  tabText: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
+  tabTextActive: { color: '#fff' },
+
+  connectBox: { marginHorizontal: 20, marginTop: 60, alignItems: 'center', gap: 12 },
   connectTitle: { fontSize: 22, fontWeight: '700', color: Colors.text },
   connectSub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
 
   statsBar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingHorizontal: 20,
-    marginBottom: 4,
-    marginTop: 8,
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8,
+    paddingHorizontal: 20, marginBottom: 4, marginTop: 8,
   },
   statPill: {
-    alignItems: 'center',
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
+    alignItems: 'center', backgroundColor: Colors.surface, borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1,
   },
-  statPillValue: { fontSize: 14, fontWeight: '700' },
+  statPillValue: { fontSize: 13, fontWeight: '700' },
   statPillLabel: { fontSize: 10, color: Colors.textMuted, marginTop: 1 },
 
   sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: Colors.text,
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 12,
+    fontSize: 17, fontWeight: '700', color: Colors.text,
+    marginHorizontal: 20, marginTop: 16, marginBottom: 12,
   },
 
   tierCard: {
-    marginHorizontal: 20,
-    marginBottom: 12,
-    backgroundColor: Colors.surface,
-    borderRadius: 18,
-    borderWidth: 1.5,
-    padding: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    overflow: 'hidden',
+    marginHorizontal: 20, marginBottom: 12, backgroundColor: Colors.surface,
+    borderRadius: 18, borderWidth: 1.5, padding: 18,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', overflow: 'hidden',
   },
   tierCardDisabled: { opacity: 0.5 },
   tierCardPopular: { backgroundColor: Colors.surfaceElevated },
   tierLeft: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
-  tierIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  tierIcon: { width: 50, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   tierLabel: { fontSize: 17, fontWeight: '700' },
   tierDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
   tierRight: { alignItems: 'flex-end', gap: 3 },
-  tierFeeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  tierFee: { fontSize: 13, color: Colors.textSecondary, fontWeight: '500' },
+  tierFee: { fontSize: 12, color: Colors.textSecondary },
   tierReward: { fontSize: 15, fontWeight: '700', color: Colors.text },
   tierMultiplier: { fontSize: 12, fontWeight: '600' },
-  popularBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
+  popularBadge: { position: 'absolute', top: 10, right: 10, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
   popularText: { fontSize: 10, fontWeight: '800', color: '#fff', letterSpacing: 0.5 },
   insufficientOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: Colors.background + 'AA',
-    borderRadius: 18,
+    ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: Colors.background + 'AA', borderRadius: 18,
   },
   insufficientText: { fontSize: 13, fontWeight: '600', color: Colors.error },
 
-  howItWorks: {
-    marginHorizontal: 20,
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: 'hidden',
+  contractsCard: {
+    marginHorizontal: 20, marginTop: 4, marginBottom: 12,
+    backgroundColor: Colors.surface, borderRadius: 14, padding: 14,
+    borderWidth: 1, borderColor: Colors.border,
   },
-  howStep: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+  contractsTitle: { fontSize: 12, color: Colors.textMuted, marginBottom: 10, fontWeight: '600' },
+  contractsRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  contractChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: Colors.surfaceElevated, paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 8, borderWidth: 1,
   },
-  howIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  howText: { fontSize: 14, color: Colors.textSecondary, flex: 1 },
+  contractChipDot: { width: 6, height: 6, borderRadius: 3 },
+  contractChipText: { fontSize: 12, fontWeight: '600' },
 
   earningsCard: {
-    marginHorizontal: 20,
-    marginTop: 16,
-    backgroundColor: Colors.success + '15',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.success + '40',
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    marginHorizontal: 20, marginTop: 4, backgroundColor: Colors.success + '10',
+    borderRadius: 14, borderWidth: 1, borderColor: Colors.success + '30',
+    padding: 16, flexDirection: 'row', alignItems: 'center', gap: 14,
   },
   earningsInfo: { flex: 1 },
-  earningsLabel: { fontSize: 13, color: Colors.textSecondary },
-  earningsValue: { fontSize: 20, fontWeight: '800', color: Colors.success, marginTop: 2 },
+  earningsLabel: { fontSize: 11, color: Colors.textSecondary },
+  earningsValue: { fontSize: 18, fontWeight: '800', color: Colors.success, marginTop: 2 },
 
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
+  // Leaderboard
+  leaderboardTitle: {
+    fontSize: 17, fontWeight: '700', color: Colors.text,
+    marginHorizontal: 20, marginTop: 16, marginBottom: 12,
   },
+  myRankCard: {
+    marginHorizontal: 20, marginBottom: 14, backgroundColor: Colors.primary + '15',
+    borderRadius: 16, padding: 16, flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: Colors.primary + '40', gap: 12,
+  },
+  myRankLeft: { alignItems: 'center', minWidth: 52 },
+  myRankLabel: { fontSize: 10, color: Colors.textMuted },
+  myRankValue: { fontSize: 26, fontWeight: '900', color: Colors.primary },
+  myRankDivider: { width: 1, height: 36, backgroundColor: Colors.primary + '30' },
+  myRankStat: { flex: 1, alignItems: 'center' },
+  myRankStatLabel: { fontSize: 10, color: Colors.textMuted },
+  myRankStatValue: { fontSize: 16, fontWeight: '700', color: Colors.text, marginTop: 2 },
 
+  leaderboardList: {
+    marginHorizontal: 20, backgroundColor: Colors.surface,
+    borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden',
+  },
+  leaderboardHeader: {
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10,
+    backgroundColor: Colors.surfaceElevated, gap: 8,
+  },
+  leaderboardHeaderText: { fontSize: 11, color: Colors.textMuted, fontWeight: '700', textTransform: 'uppercase' },
+  leaderboardRow: {
+    flexDirection: 'row', alignItems: 'center', padding: 14,
+    borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 8,
+  },
+  leaderboardRowTop: { backgroundColor: Colors.surfaceElevated },
+  leaderboardRankWrap: { width: 28, alignItems: 'center' },
+  leaderboardRank: { fontSize: 14, fontWeight: '700', color: Colors.textMuted },
+  rankEmoji: { fontSize: 20 },
+  leaderboardName: { fontSize: 13, fontWeight: '600', color: Colors.text },
+  leaderboardStreak: { fontSize: 10, color: Colors.error, marginTop: 2 },
+  leaderboardWL: { fontSize: 12, color: Colors.textSecondary, textAlign: 'right', minWidth: 44 },
+  leaderboardEarned: { fontSize: 13, fontWeight: '700', color: Colors.success, textAlign: 'right', minWidth: 52 },
+
+  leaderboardNote: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginHorizontal: 20, marginTop: 12,
+  },
+  leaderboardNoteText: { fontSize: 11, color: Colors.textMuted, flex: 1 },
+
+  // Modals
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+    alignItems: 'center', justifyContent: 'center', padding: 20,
+  },
   modalCard: {
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: Colors.surface,
-    borderRadius: 24,
-    padding: 28,
-    alignItems: 'center',
-    gap: 16,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    width: '100%', maxWidth: 360, backgroundColor: Colors.surface, borderRadius: 24,
+    padding: 28, alignItems: 'center', gap: 16, borderWidth: 1, borderColor: Colors.border,
   },
   matchmakingOrb: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 80, height: 80, borderRadius: 40, backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
   },
   modalTitle: { fontSize: 20, fontWeight: '700', color: Colors.text },
   modalSub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
-  matchmakingBar: {
-    width: '100%',
-    height: 4,
-    backgroundColor: Colors.border,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  matchmakingFill: {
-    height: '100%',
-    backgroundColor: Colors.primary,
-    borderRadius: 2,
-  },
+  matchmakingBar: { width: '100%', height: 4, backgroundColor: Colors.border, borderRadius: 2, overflow: 'hidden' },
+  matchmakingFill: { height: '100%', width: '75%', backgroundColor: Colors.primary, borderRadius: 2 },
 
   countdownLabel: { fontSize: 16, color: Colors.textSecondary, fontWeight: '600' },
   countdown: { fontSize: 72, fontWeight: '900', color: Colors.text },
@@ -662,14 +739,8 @@ const styles = StyleSheet.create({
   fighterCard: { alignItems: 'center', gap: 8, flex: 1 },
   fighterName: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600', textAlign: 'center' },
   vsCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Colors.gold + '20',
-    borderWidth: 1,
-    borderColor: Colors.gold + '60',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.gold + '20',
+    borderWidth: 1, borderColor: Colors.gold + '60', alignItems: 'center', justifyContent: 'center',
   },
   vsText: { fontSize: 14, fontWeight: '900', color: Colors.gold },
   battleStatus: { fontSize: 15, color: Colors.textSecondary },
@@ -678,98 +749,53 @@ const styles = StyleSheet.create({
   battleBarFill: { height: '100%', borderRadius: 4 },
 
   resultCard: {
-    width: '100%',
-    maxWidth: 360,
-    borderRadius: 24,
-    overflow: 'hidden',
-    borderWidth: 1,
+    width: '100%', maxWidth: 360, borderRadius: 24, overflow: 'hidden', borderWidth: 1,
   },
   resultCardWin: { backgroundColor: Colors.surface, borderColor: Colors.success + '60' },
   resultCardLoss: { backgroundColor: Colors.surface, borderColor: Colors.error + '60' },
   resultBannerWin: {
-    backgroundColor: Colors.success + '20',
-    padding: 20,
-    alignItems: 'center',
-    gap: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.success + '30',
+    backgroundColor: Colors.success + '20', padding: 20, alignItems: 'center', gap: 4,
+    borderBottomWidth: 1, borderBottomColor: Colors.success + '30',
   },
   resultBannerLoss: {
-    backgroundColor: Colors.error + '20',
-    padding: 20,
-    alignItems: 'center',
-    gap: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.error + '30',
+    backgroundColor: Colors.error + '20', padding: 20, alignItems: 'center', gap: 4,
+    borderBottomWidth: 1, borderBottomColor: Colors.error + '30',
   },
   resultEmoji: { fontSize: 36 },
   resultTitle: { fontSize: 24, fontWeight: '900', color: Colors.text, letterSpacing: 2 },
-
-  resultBody: { padding: 20, gap: 14 },
+  resultBody: { padding: 20, gap: 12 },
   resultOpponent: { fontSize: 14, color: Colors.textMuted, textAlign: 'center' },
-
   aglFlow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: 14,
-    padding: 14,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: Colors.surfaceElevated, borderRadius: 14, padding: 14,
   },
   aglFlowItem: { alignItems: 'center', gap: 4 },
   aglFlowLabel: { fontSize: 11, color: Colors.textMuted },
   aglFlowValue: { fontSize: 16, fontWeight: '700' },
-
-  netGain: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
+  netGain: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 4 },
   netGainLabel: { fontSize: 14, color: Colors.textSecondary, fontWeight: '600' },
   netGainValue: { fontSize: 22, fontWeight: '800' },
-
   newBalanceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    justifyContent: 'center',
-    backgroundColor: Colors.primary + '10',
-    paddingVertical: 10,
-    borderRadius: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center',
+    backgroundColor: Colors.primary + '10', paddingVertical: 10, borderRadius: 10,
   },
   newBalanceText: { fontSize: 14, color: Colors.primary, fontWeight: '600' },
-
   streakBanner: {
-    backgroundColor: Colors.error + '15',
-    borderRadius: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: Colors.error + '30',
+    backgroundColor: Colors.error + '15', borderRadius: 10, padding: 10,
+    borderWidth: 1, borderColor: Colors.error + '30',
   },
   streakBannerText: { fontSize: 13, color: Colors.error, textAlign: 'center', fontWeight: '600' },
 
   resultActions: { flexDirection: 'row', gap: 12, padding: 20, paddingTop: 0 },
   rematchBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.primary,
-    paddingVertical: 14,
-    borderRadius: 14,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 8, backgroundColor: Colors.primary, paddingVertical: 14, borderRadius: 14,
   },
   rematchText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   lobbyBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: 14,
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14,
+    borderRadius: 14, backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1, borderColor: Colors.border,
   },
   lobbyText: { color: Colors.textSecondary, fontWeight: '600', fontSize: 15 },
 });

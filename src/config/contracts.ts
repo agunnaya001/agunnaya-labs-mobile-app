@@ -2,9 +2,9 @@ export const CHAIN_ID = 8453; // Base mainnet
 
 // ─── Token Contracts ──────────────────────────────────────────────────────────
 export const TOKEN_ADDRESSES = {
-  AGL:  '0xEA1221B4d80A89BD8C75248Fae7c176BD1854698', // Agunnaya Labs Token
-  ARNA: '0x3b855F88CB93aA642EaEB13F59987C552Fc614b5', // Arena Token ERC-20
-  USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b1566dA7C66', // Base USDC
+  AGL:   '0xEA1221B4d80A89BD8C75248Fae7c176BD1854698', // Agunnaya Labs Token
+  ARENA: '0x3b855F88CB93aA642EaEB13F59987C552Fc614b5', // Arena Token ERC-20
+  USDC:  '0x833589fCD6eDb6E08f4c7C32D4f71b1566dA7C66', // Base USDC
 } as const;
 
 // ─── NFT Contracts ────────────────────────────────────────────────────────────
@@ -21,17 +21,17 @@ export const ARENA_ADDRESSES = {
 
 // ─── Decimal precision ────────────────────────────────────────────────────────
 export const TOKEN_DECIMALS: Record<string, number> = {
-  AGL:  18,
-  ARNA: 18,
-  USDC: 6,
-  ETH:  18,
+  AGL:   18,
+  ARENA: 18,
+  USDC:  6,
+  ETH:   18,
 };
 
 // ─── External APIs ────────────────────────────────────────────────────────────
 export const COINGECKO_API = 'https://api.coingecko.com/api/v3';
 
 export const API_ENDPOINTS = {
-  TOKEN_PRICE:  `${COINGECKO_API}/simple/price`,
+  TOKEN_PRICE:   `${COINGECKO_API}/simple/price`,
   TOKEN_BALANCE: (process.env.EXPO_PUBLIC_API_URL ?? '') + '/api/tokens/balance',
   NFTS:          (process.env.EXPO_PUBLIC_API_URL ?? '') + '/api/nfts',
   GAME_STATS:    (process.env.EXPO_PUBLIC_API_URL ?? '') + '/api/game/stats',
@@ -39,5 +39,6 @@ export const API_ENDPOINTS = {
   TRANSACTIONS:  (process.env.EXPO_PUBLIC_API_URL ?? '') + '/api/transactions',
 };
 
-export const ALCHEMY_API_KEY  = process.env.EXPO_PUBLIC_ALCHEMY_KEY  ?? '';
-export const OPENSEA_API_KEY  = process.env.EXPO_PUBLIC_OPENSEA_KEY  ?? '';
+export const ALCHEMY_API_KEY = process.env.EXPO_PUBLIC_ALCHEMY_KEY  ?? '';
+export const OPENSEA_API_KEY = process.env.EXPO_PUBLIC_OPENSEA_KEY  ?? '';
+export const BASE_EXPLORER   = 'https://basescan.org';
