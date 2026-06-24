@@ -6,14 +6,19 @@ import {
   TouchableOpacity,
   Platform,
   Modal,
+  Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@constants/colors';
 import { useWalletStore } from '@store/walletStore';
 import { useState } from 'react';
+import { NFT_ADDRESSES, ARENA_ADDRESSES } from '@config/contracts';
+import { useChampionNFTBalance, useMarketplaceListings } from '@hooks/useContracts';
 
-interface NFT {
+const BASE_EXPLORER = 'https://basescan.org/address/';
+
+interface LocalNFT {
   id: string;
   name: string;
   collection: string;
@@ -23,9 +28,10 @@ interface NFT {
   iconColor: string;
   owned: boolean;
   description: string;
+  contractAddress: string;
 }
 
-const RARITIES: Record<NFT['rarity'], string> = {
+const RARITIES: Record<LocalNFT['rarity'], string> = {
   Common: Colors.textSecondary,
   Uncommon: Colors.success,
   Rare: Colors.info,
@@ -33,36 +39,72 @@ const RARITIES: Record<NFT['rarity'], string> = {
   Legendary: Colors.gold,
 };
 
-const DEMO_NFTS: NFT[] = [
+const DEMO_NFTS: LocalNFT[] = [
   {
     id: '1', name: 'Genesis Warrior #001', collection: 'Agunnaya Genesis',
     rarity: 'Legendary', floorPrice: 800, icon: 'shield', iconColor: Colors.gold,
-    owned: true, description: 'One of 50 legendary Genesis Warriors. Grants +15% Arena win rate and exclusive tournament access.',
+    owned: true, contractAddress: NFT_ADDRESSES.ARENA_CHAMPION,
+    description: 'One of 50 legendary Genesis Warriors. Grants +15% Arena win rate and exclusive tournament access.',
   },
   {
-    id: '2', name: 'Arena Champion #042', collection: 'Arena Warriors',
+    id: '2', name: 'Arena Champion #042', collection: 'Arena Champions',
     rarity: 'Epic', floorPrice: 320, icon: 'trophy', iconColor: Colors.primary,
-    owned: true, description: 'A battle-hardened champion from the first Arena season. Grants +8% AGL rewards on wins.',
+    owned: true, contractAddress: NFT_ADDRESSES.ARENA_CHAMPION,
+    description: 'A battle-hardened champion from the first Arena season. Grants +8% AGL rewards on wins.',
   },
   {
     id: '3', name: 'AGL Founder Badge', collection: 'AGL Founders',
     rarity: 'Legendary', floorPrice: 1200, icon: 'diamond', iconColor: Colors.accent,
-    owned: true, description: 'Exclusive to early supporters of Agunnaya Labs. Lifetime 5% fee discount on all platform actions.',
+    owned: true, contractAddress: NFT_ADDRESSES.ARENA_CHAMPION,
+    description: 'Exclusive to early supporters of Agunnaya Labs. Lifetime 5% fee discount on all platform actions.',
   },
   {
-    id: '4', name: 'Storm Blade #217', collection: 'Arena Warriors',
+    id: '4', name: 'Storm Blade #217', collection: 'Arena Champions',
     rarity: 'Rare', floorPrice: 150, icon: 'flash', iconColor: Colors.info,
-    owned: false, description: 'A fearsome weapon wielded by top-ranked Arena competitors. Grants bonus XP on each match.',
+    owned: false, contractAddress: NFT_ADDRESSES.ARENA_CHAMPION,
+    description: 'A fearsome weapon wielded by top-ranked Arena competitors. Grants bonus XP on each match.',
   },
   {
     id: '5', name: 'Shadow Crest #089', collection: 'Agunnaya Genesis',
     rarity: 'Epic', floorPrice: 410, icon: 'moon', iconColor: Colors.primary,
-    owned: false, description: 'Rare crest of the Shadow faction. Reduces Arena entry fees by 10% when equipped.',
+    owned: false, contractAddress: NFT_ADDRESSES.ARENA_CHAMPION,
+    description: 'Rare crest of the Shadow faction. Reduces Arena entry fees by 10% when equipped.',
   },
   {
-    id: '6', name: 'Iron Shield #304', collection: 'Arena Warriors',
+    id: '6', name: 'Iron Shield #304', collection: 'Arena Champions',
     rarity: 'Uncommon', floorPrice: 55, icon: 'shield-half', iconColor: Colors.success,
-    owned: false, description: 'Entry-level Arena equipment. A solid choice for new competitors.',
+    owned: false, contractAddress: NFT_ADDRESSES.ARENA_CHAMPION,
+    description: 'Entry-level Arena equipment. A solid choice for new competitors.',
+  },
+];
+
+const COLLECTIONS = [
+  {
+    name: 'Arena Champions NFT',
+    items: '∞',
+    contract: NFT_ADDRESSES.ARENA_CHAMPION,
+    floor: 320,
+    icon: 'trophy' as const,
+    color: Colors.primary,
+    verified: true,
+  },
+  {
+    name: 'Agunnaya Genesis',
+    items: '1,000',
+    contract: NFT_ADDRESSES.ARENA_CHAMPION,
+    floor: 800,
+    icon: 'diamond' as const,
+    color: Colors.accent,
+    verified: true,
+  },
+  {
+    name: 'AGL Founders',
+    items: '500',
+    contract: NFT_ADDRESSES.ARENA_CHAMPION,
+    floor: 1200,
+    icon: 'star' as const,
+    color: Colors.gold,
+    verified: true,
   },
 ];
 
@@ -70,19 +112,24 @@ type TabFilter = 'owned' | 'market';
 
 export default function NFTsScreen() {
   const insets = useSafeAreaInsets();
-  const { isConnected, aglBalance, purchaseNFT, addTransaction } = useWalletStore();
+  const { isConnected, user, aglBalance, purchaseNFT } = useWalletStore();
   const [tab, setTab] = useState<TabFilter>('owned');
-  const [selectedNFT, setSelectedNFT] = useState<NFT | null>(null);
+  const [selectedNFT, setSelectedNFT] = useState<LocalNFT | null>(null);
   const [purchaseSuccess, setPurchaseSuccess] = useState<string | null>(null);
   const [ownedIds, setOwnedIds] = useState<Set<string>>(
-    new Set(DEMO_NFTS.filter((n) => n.owned).map((n) => n.id))
+    new Set(DEMO_NFTS.filter((n) => n.owned).map((n) => n.id)),
   );
+
+  const { data: chainNFTBalance } = useChampionNFTBalance(user?.address ?? null);
+  const { data: marketListings } = useMarketplaceListings(0, 10);
 
   const displayed = DEMO_NFTS.filter((n) =>
-    tab === 'owned' ? ownedIds.has(n.id) : !ownedIds.has(n.id)
+    tab === 'owned' ? ownedIds.has(n.id) : !ownedIds.has(n.id),
   );
 
-  const handleBuy = (nft: NFT) => {
+  const totalOwned = ownedIds.size + (chainNFTBalance ?? 0);
+
+  const handleBuy = (nft: LocalNFT) => {
     if (aglBalance < nft.floorPrice) return;
     const ok = purchaseNFT(nft.name, nft.floorPrice);
     if (ok) {
@@ -91,6 +138,10 @@ export default function NFTsScreen() {
       setPurchaseSuccess(`Purchased ${nft.name}!`);
       setTimeout(() => setPurchaseSuccess(null), 3000);
     }
+  };
+
+  const openExplorer = (address: string) => {
+    Linking.openURL(BASE_EXPLORER + address);
   };
 
   return (
@@ -102,7 +153,7 @@ export default function NFTsScreen() {
           {isConnected && (
             <View style={styles.countBadge}>
               <Ionicons name="diamond-outline" size={12} color={Colors.primary} />
-              <Text style={styles.countText}>{ownedIds.size} owned</Text>
+              <Text style={styles.countText}>{totalOwned} owned</Text>
             </View>
           )}
         </View>
@@ -133,17 +184,31 @@ export default function NFTsScreen() {
                   onPress={() => setTab(t)}
                 >
                   <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                    {t === 'owned' ? `My NFTs (${ownedIds.size})` : 'Marketplace'}
+                    {t === 'owned' ? `My NFTs (${totalOwned})` : 'Marketplace'}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
 
-            {/* Balance hint for marketplace */}
             {tab === 'market' && (
               <View style={styles.balanceHint}>
                 <Ionicons name="diamond" size={13} color={Colors.primary} />
-                <Text style={styles.balanceHintText}>{aglBalance.toLocaleString()} AGL available to spend</Text>
+                <Text style={styles.balanceHintText}>
+                  {aglBalance.toLocaleString()} AGL available to spend
+                </Text>
+              </View>
+            )}
+
+            {/* On-chain marketplace listings banner */}
+            {tab === 'market' && marketListings && marketListings.length > 0 && (
+              <View style={styles.chainBanner}>
+                <Ionicons name="link" size={14} color={Colors.success} />
+                <Text style={styles.chainBannerText}>
+                  {marketListings.length} live listing{marketListings.length !== 1 ? 's' : ''} on-chain
+                </Text>
+                <TouchableOpacity onPress={() => openExplorer(ARENA_ADDRESSES.MARKETPLACE)}>
+                  <Text style={styles.chainBannerLink}>View on Basescan ↗</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -197,20 +262,28 @@ export default function NFTsScreen() {
             )}
 
             {/* Collections */}
-            <Text style={styles.sectionTitle}>Collections</Text>
+            <Text style={styles.sectionTitle}>Collections · Base Network</Text>
             <View style={styles.collectionList}>
-              {[
-                { name: 'Agunnaya Genesis', items: 1000, floor: 800, icon: 'diamond' as const, color: Colors.accent },
-                { name: 'Arena Warriors', items: 5000, floor: 55, icon: 'shield' as const, color: Colors.primary },
-                { name: 'AGL Founders', items: 500, floor: 1200, icon: 'star' as const, color: Colors.gold },
-              ].map((c) => (
-                <View key={c.name} style={styles.collectionRow}>
+              {COLLECTIONS.map((c) => (
+                <TouchableOpacity
+                  key={c.name}
+                  style={styles.collectionRow}
+                  onPress={() => openExplorer(c.contract)}
+                  activeOpacity={0.8}
+                >
                   <View style={[styles.collectionIcon, { backgroundColor: c.color + '20' }]}>
                     <Ionicons name={c.icon} size={20} color={c.color} />
                   </View>
                   <View style={styles.collectionInfo}>
-                    <Text style={styles.collectionName}>{c.name}</Text>
-                    <Text style={styles.collectionItems}>{c.items.toLocaleString()} items</Text>
+                    <View style={styles.collectionNameRow}>
+                      <Text style={styles.collectionName}>{c.name}</Text>
+                      {c.verified && (
+                        <Ionicons name="checkmark-circle" size={13} color={Colors.primary} />
+                      )}
+                    </View>
+                    <Text style={styles.collectionContract} numberOfLines={1}>
+                      {c.contract.slice(0, 10)}...{c.contract.slice(-6)}
+                    </Text>
                   </View>
                   <View style={styles.collectionFloor}>
                     <Text style={styles.floorLabel}>Floor</Text>
@@ -219,8 +292,35 @@ export default function NFTsScreen() {
                       <Text style={styles.floorValueText}>{c.floor} AGL</Text>
                     </View>
                   </View>
-                  <Ionicons name="chevron-forward" size={16} color={Colors.textMuted} />
-                </View>
+                  <Ionicons name="open-outline" size={15} color={Colors.textMuted} />
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Contract addresses reference */}
+            <Text style={styles.sectionTitle}>Contract Addresses</Text>
+            <View style={styles.contractList}>
+              {[
+                { label: 'Arena Champion NFT', address: NFT_ADDRESSES.ARENA_CHAMPION, color: Colors.primary },
+                { label: 'AGL Token', address: '0xEA1221B4d80A89BD8C75248Fae7c176BD1854698', color: Colors.gold },
+                { label: 'ARNA Token', address: '0x3b855F88CB93aA642EaEB13F59987C552Fc614b5', color: Colors.accent },
+                { label: 'Marketplace', address: ARENA_ADDRESSES.MARKETPLACE, color: Colors.success },
+                { label: 'Arena PVE', address: ARENA_ADDRESSES.PVE, color: Colors.info },
+                { label: 'Arena PVP', address: ARENA_ADDRESSES.PVP, color: Colors.error },
+              ].map((c) => (
+                <TouchableOpacity
+                  key={c.label}
+                  style={styles.contractRow}
+                  onPress={() => openExplorer(c.address)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.contractDot, { backgroundColor: c.color }]} />
+                  <View style={styles.contractInfo}>
+                    <Text style={styles.contractLabel}>{c.label}</Text>
+                    <Text style={styles.contractAddress}>{c.address}</Text>
+                  </View>
+                  <Ionicons name="open-outline" size={13} color={Colors.textMuted} />
+                </TouchableOpacity>
               ))}
             </View>
           </>
@@ -248,6 +348,17 @@ export default function NFTsScreen() {
                   <Text style={styles.detailName}>{selectedNFT.name}</Text>
                   <Text style={styles.detailCollection}>{selectedNFT.collection}</Text>
                   <Text style={styles.detailDesc}>{selectedNFT.description}</Text>
+
+                  {/* Contract link */}
+                  <TouchableOpacity
+                    style={styles.contractLink}
+                    onPress={() => openExplorer(selectedNFT.contractAddress)}
+                  >
+                    <Ionicons name="link-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.contractLinkText}>
+                      {selectedNFT.contractAddress.slice(0, 10)}...{selectedNFT.contractAddress.slice(-6)} ↗
+                    </Text>
+                  </TouchableOpacity>
 
                   <View style={styles.detailStats}>
                     <View style={styles.detailStat}>
@@ -384,7 +495,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginHorizontal: 20,
-    marginBottom: 12,
+    marginBottom: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     backgroundColor: Colors.primary + '10',
@@ -393,6 +504,23 @@ const styles = StyleSheet.create({
     borderColor: Colors.primary + '25',
   },
   balanceHintText: { fontSize: 13, color: Colors.primary, fontWeight: '500' },
+
+  chainBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 20,
+    marginBottom: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: Colors.success + '10',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.success + '25',
+    flexWrap: 'wrap',
+  },
+  chainBannerText: { fontSize: 12, color: Colors.success, flex: 1 },
+  chainBannerLink: { fontSize: 12, color: Colors.primary, fontWeight: '600' },
 
   grid: {
     flexDirection: 'row',
@@ -414,14 +542,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     position: 'relative',
   },
-  rarityDot: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
+  rarityDot: { position: 'absolute', top: 10, right: 10, width: 10, height: 10, borderRadius: 5 },
   nftMeta: { padding: 12 },
   nftName: { fontSize: 13, fontWeight: '700', color: Colors.text },
   nftCollection: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
@@ -462,12 +583,39 @@ const styles = StyleSheet.create({
   },
   collectionIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   collectionInfo: { flex: 1 },
-  collectionName: { fontSize: 15, fontWeight: '600', color: Colors.text },
-  collectionItems: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  collectionNameRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  collectionName: { fontSize: 14, fontWeight: '600', color: Colors.text },
+  collectionContract: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
   collectionFloor: { alignItems: 'flex-end', marginRight: 4 },
   floorLabel: { fontSize: 10, color: Colors.textMuted },
   floorValue: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   floorValueText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
+
+  contractList: {
+    marginHorizontal: 20,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  contractRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    gap: 12,
+  },
+  contractDot: { width: 8, height: 8, borderRadius: 4, flexShrink: 0 },
+  contractInfo: { flex: 1 },
+  contractLabel: { fontSize: 13, fontWeight: '600', color: Colors.text },
+  contractAddress: {
+    fontSize: 10,
+    color: Colors.textMuted,
+    marginTop: 2,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
 
   // Detail modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
@@ -496,25 +644,20 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     position: 'relative',
   },
-  rarityDotLg: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-  },
+  rarityDotLg: { position: 'absolute', top: 14, right: 14, width: 14, height: 14, borderRadius: 7 },
   detailInfo: { gap: 8 },
   rarityTagLg: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   rarityTagText: { fontSize: 12, fontWeight: '700' },
   detailName: { fontSize: 22, fontWeight: '800', color: Colors.text },
   detailCollection: { fontSize: 14, color: Colors.textMuted },
   detailDesc: { fontSize: 14, color: Colors.textSecondary, lineHeight: 20, marginTop: 4 },
-  detailStats: {
+  contractLink: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
+    alignItems: 'center',
+    gap: 5,
   },
+  contractLinkText: { fontSize: 12, color: Colors.primary },
+  detailStats: { flexDirection: 'row', gap: 12, marginTop: 4 },
   detailStat: {
     flex: 1,
     backgroundColor: Colors.surfaceElevated,

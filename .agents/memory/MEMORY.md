@@ -1,0 +1,1 @@
+- [Contract Addresses](contracts.md) — 6 real Base mainnet contracts; source of truth is `src/config/contracts.ts`; never hardcode addresses elsewhere.

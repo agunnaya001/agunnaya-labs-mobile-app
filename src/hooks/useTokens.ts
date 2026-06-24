@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getTokenBalance, getNativeBalance } from '@services/blockchain';
 import { getTokenPrices } from '@services/tokens';
 import { useWalletStore } from '@store/walletStore';
+import { TOKEN_ADDRESSES } from '@config/contracts';
 
 export const useTokenBalance = (tokenAddress: string | null, userAddress: string | null) => {
   return useQuery({

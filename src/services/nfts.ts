@@ -1,4 +1,14 @@
 import apiClient from './api';
+import { NFT_ADDRESSES, ARENA_ADDRESSES } from '@config/contracts';
+import {
+  getNFTBalance,
+  getNFTTokensOfOwner,
+  getNFTTokenURI,
+  getActiveMarketplaceListings,
+  type MarketplaceListing,
+} from './blockchain';
+
+export { type MarketplaceListing };
 
 export interface NFT {
   id: string;
@@ -11,39 +21,115 @@ export interface NFT {
   tokenId: string;
 }
 
+export interface ChainNFT {
+  tokenId: string;
+  tokenURI: string | null;
+  contractAddress: string;
+  collection: string;
+}
+
+// ─── On-chain reads ──────────────────────────────────────────────────────────
+
+export const fetchChampionNFTBalance = async (userAddress: string): Promise<number> => {
+  return getNFTBalance(NFT_ADDRESSES.ARENA_CHAMPION, userAddress);
+};
+
+export const fetchChampionNFTs = async (userAddress: string): Promise<ChainNFT[]> => {
+  try {
+    const tokenIds = await getNFTTokensOfOwner(NFT_ADDRESSES.ARENA_CHAMPION, userAddress, 50);
+    const nfts = await Promise.allSettled(
+      tokenIds.map(async (id) => {
+        const uri = await getNFTTokenURI(NFT_ADDRESSES.ARENA_CHAMPION, id);
+        return {
+          tokenId: id.toString(),
+          tokenURI: uri,
+          contractAddress: NFT_ADDRESSES.ARENA_CHAMPION,
+          collection: 'Arena Champions',
+        } satisfies ChainNFT;
+      }),
+    );
+    return nfts
+      .filter((r): r is PromiseFulfilledResult<ChainNFT> => r.status === 'fulfilled')
+      .map((r) => r.value);
+  } catch (error) {
+    console.error('[nfts] fetchChampionNFTs:', error);
+    return [];
+  }
+};
+
+export const fetchMarketplaceListings = async (
+  offset = 0,
+  limit = 20,
+): Promise<MarketplaceListing[]> => {
+  return getActiveMarketplaceListings(ARENA_ADDRESSES.MARKETPLACE, offset, limit);
+};
+
+// ─── API-backed reads (with on-chain fallback) ────────────────────────────────
+
 export const fetchUserNFTs = async (userAddress: string): Promise<NFT[]> => {
   try {
-    const response = await apiClient.get(`/api/nfts/${userAddress}`);
-    return response.data.nfts || [];
+    const [apiResult, chainNFTs] = await Promise.allSettled([
+      apiClient.get(`/api/nfts/${userAddress}`).then((r) => r.data.nfts as NFT[] || []),
+      fetchChampionNFTs(userAddress),
+    ]);
+
+    const apiNFTs: NFT[] = apiResult.status === 'fulfilled' ? apiResult.value : [];
+    const chain: ChainNFT[] = chainNFTs.status === 'fulfilled' ? chainNFTs.value : [];
+
+    const chainConverted: NFT[] = chain.map((c) => ({
+      id: c.tokenId,
+      name: `Arena Champion #${c.tokenId}`,
+      image: c.tokenURI ?? '',
+      collection: c.collection,
+      rarity: 'Epic',
+      floorPrice: undefined,
+      tokenAddress: c.contractAddress,
+      tokenId: c.tokenId,
+    }));
+
+    const knownIds = new Set(apiNFTs.map((n) => n.tokenId));
+    const newFromChain = chainConverted.filter((n) => !knownIds.has(n.tokenId));
+    return [...apiNFTs, ...newFromChain];
   } catch (error) {
-    console.error('Error fetching NFTs:', error);
+    console.error('[nfts] fetchUserNFTs:', error);
     return [];
   }
 };
 
 export const getNFTMetadata = async (
   contractAddress: string,
-  tokenId: string
+  tokenId: string,
 ): Promise<NFT | null> => {
   try {
-    const response = await apiClient.get(
-      `/api/nft-metadata/${contractAddress}/${tokenId}`
-    );
+    const response = await apiClient.get(`/api/nft-metadata/${contractAddress}/${tokenId}`);
     return response.data;
-  } catch (error) {
-    console.error('Error fetching NFT metadata:', error);
-    return null;
+  } catch {
+    try {
+      const uri = await getNFTTokenURI(contractAddress, tokenId);
+      if (!uri) return null;
+      return {
+        id: tokenId,
+        name: `Token #${tokenId}`,
+        image: uri,
+        collection: 'Unknown',
+        tokenAddress: contractAddress,
+        tokenId,
+      };
+    } catch (error) {
+      console.error('[nfts] getNFTMetadata:', error);
+      return null;
+    }
   }
 };
 
 export const getNFTCollectionFloor = async (
-  contractAddress: string
+  contractAddress: string,
 ): Promise<number | null> => {
   try {
     const response = await apiClient.get(`/api/nft-collection/${contractAddress}`);
     return response.data.floorPrice;
   } catch (error) {
-    console.error('Error fetching collection floor price:', error);
+    console.error('[nfts] getNFTCollectionFloor:', error);
     return null;
   }
 };
