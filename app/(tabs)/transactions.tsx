@@ -5,131 +5,162 @@ import {
   ScrollView,
   TouchableOpacity,
   Platform,
-  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '@constants/colors';
-import { useWalletStore } from '@store/walletStore';
-import { useTransactionHistory } from '@hooks/useTransactions';
-import { Transaction } from '@services/transactions';
+import { useWalletStore, LocalTx } from '@store/walletStore';
 import { format } from 'date-fns';
 
-function formatAddress(address: string) {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+type TxType = LocalTx['type'];
+
+const TX_META: Record<TxType, { icon: React.ComponentProps<typeof Ionicons>['name']; color: string; label: string }> = {
+  arena_win: { icon: 'trophy', color: Colors.gold, label: 'Arena Win' },
+  arena_loss: { icon: 'game-controller-outline', color: Colors.error, label: 'Arena Loss' },
+  send: { icon: 'arrow-up-circle', color: Colors.primary, label: 'Sent' },
+  receive: { icon: 'arrow-down-circle', color: Colors.success, label: 'Received' },
+  nft_purchase: { icon: 'image', color: Colors.accent, label: 'NFT Purchase' },
+  swap: { icon: 'swap-horizontal', color: Colors.gold, label: 'Swap' },
+};
+
+function TxRow({ tx }: { tx: LocalTx }) {
+  const meta = TX_META[tx.type];
+  const isPositive = tx.type === 'arena_win' || tx.type === 'receive';
+  return (
+    <View style={styles.txRow}>
+      <View style={[styles.txIcon, { backgroundColor: meta.color + '20' }]}>
+        <Ionicons name={meta.icon} size={20} color={meta.color} />
+      </View>
+      <View style={styles.txBody}>
+        <Text style={styles.txLabel}>{meta.label}</Text>
+        <Text style={styles.txDesc} numberOfLines={1}>{tx.description}</Text>
+        <Text style={styles.txTime}>{format(new Date(tx.timestamp), 'MMM d · HH:mm')}</Text>
+      </View>
+      <View style={styles.txRight}>
+        <Text style={[styles.txAmount, { color: isPositive ? Colors.success : Colors.error }]}>
+          {isPositive ? '+' : '−'}{tx.amount} {tx.token}
+        </Text>
+        <View style={[styles.statusBadge, { backgroundColor: Colors.success + '20' }]}>
+          <Text style={[styles.statusText, { color: Colors.success }]}>{tx.status}</Text>
+        </View>
+      </View>
+    </View>
+  );
 }
 
-function txIcon(type: Transaction['type']) {
-  switch (type) {
-    case 'send': return { name: 'arrow-up-outline' as const, color: Colors.error, bg: Colors.error };
-    case 'receive': return { name: 'arrow-down-outline' as const, color: Colors.success, bg: Colors.success };
-    case 'swap': return { name: 'swap-horizontal-outline' as const, color: Colors.gold, bg: Colors.gold };
-  }
-}
-
-function statusColor(status: Transaction['status']) {
-  switch (status) {
-    case 'completed': return Colors.success;
-    case 'pending': return Colors.warning;
-    case 'failed': return Colors.error;
-  }
-}
+const TYPE_FILTERS: { key: TxType | 'all'; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'arena_win', label: 'Wins' },
+  { key: 'arena_loss', label: 'Losses' },
+  { key: 'send', label: 'Sends' },
+  { key: 'nft_purchase', label: 'NFTs' },
+  { key: 'swap', label: 'Swaps' },
+];
 
 export default function TransactionsScreen() {
   const insets = useSafeAreaInsets();
-  const { user, isConnected } = useWalletStore();
-  const { data: transactions, isLoading } = useTransactionHistory(user?.address || null);
+  const { isConnected, transactions, arenaStats, aglBalance } = useWalletStore();
+  const [filter, setFilter] = [
+    'all' as TxType | 'all',
+    (v: TxType | 'all') => {},
+  ];
+  const [activeFilter, setActiveFilter] = React.useState<TxType | 'all'>('all');
+
+  const filtered =
+    activeFilter === 'all' ? transactions : transactions.filter((t) => t.type === activeFilter);
+
+  const totalWon = transactions
+    .filter((t) => t.type === 'arena_win')
+    .reduce((s, t) => s + t.amount, 0);
+  const totalSpent = transactions
+    .filter((t) => t.type === 'arena_loss' || t.type === 'nft_purchase' || t.type === 'send' || t.type === 'swap')
+    .reduce((s, t) => s + t.amount, 0);
 
   return (
     <View style={[styles.container, { paddingTop: Platform.OS === 'web' ? 67 : insets.top }]}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>History</Text>
-          <TouchableOpacity style={styles.filterBtn}>
-            <Ionicons name="filter-outline" size={18} color={Colors.textSecondary} />
-          </TouchableOpacity>
+          <Text style={styles.title}>History</Text>
+          {isConnected && transactions.length > 0 && (
+            <View style={styles.countBadge}>
+              <Text style={styles.countText}>{transactions.length} txns</Text>
+            </View>
+          )}
         </View>
 
         {!isConnected ? (
           <View style={styles.emptyState}>
             <Ionicons name="time-outline" size={56} color={Colors.textMuted} />
-            <Text style={styles.emptyTitle}>Connect Your Wallet</Text>
-            <Text style={styles.emptySubtitle}>See your transaction history here</Text>
-          </View>
-        ) : isLoading ? (
-          <View style={styles.loadingState}>
-            <ActivityIndicator size="large" color={Colors.primary} />
-            <Text style={styles.loadingText}>Loading transactions...</Text>
-          </View>
-        ) : transactions && transactions.length > 0 ? (
-          <View style={styles.txList}>
-            {transactions.map((tx) => {
-              const icon = txIcon(tx.type);
-              return (
-                <TouchableOpacity key={tx.id} style={styles.txRow}>
-                  <View style={[styles.txIcon, { backgroundColor: icon.bg + '20' }]}>
-                    <Ionicons name={icon.name} size={20} color={icon.color} />
-                  </View>
-                  <View style={styles.txInfo}>
-                    <Text style={styles.txType}>{tx.type.charAt(0).toUpperCase() + tx.type.slice(1)}</Text>
-                    <Text style={styles.txAddress}>
-                      {tx.type === 'receive' ? `From ${formatAddress(tx.from)}` : `To ${formatAddress(tx.to)}`}
-                    </Text>
-                    <Text style={styles.txDate}>
-                      {format(new Date(tx.timestamp * 1000), 'MMM d, yyyy · HH:mm')}
-                    </Text>
-                  </View>
-                  <View style={styles.txRight}>
-                    <Text style={[styles.txAmount, { color: tx.type === 'receive' ? Colors.success : Colors.text }]}>
-                      {tx.type === 'receive' ? '+' : '-'}{tx.amount} {tx.token}
-                    </Text>
-                    <View style={[styles.statusBadge, { backgroundColor: statusColor(tx.status) + '20' }]}>
-                      <Text style={[styles.statusText, { color: statusColor(tx.status) }]}>
-                        {tx.status}
-                      </Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
+            <Text style={styles.emptyTitle}>Connect Wallet</Text>
+            <Text style={styles.emptySub}>Your transaction history will appear here</Text>
           </View>
         ) : (
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIconContainer}>
-              <Ionicons name="receipt-outline" size={48} color={Colors.primary} />
-            </View>
-            <Text style={styles.emptyTitle}>No Transactions</Text>
-            <Text style={styles.emptySubtitle}>
-              Your transaction history will appear here
-            </Text>
-          </View>
-        )}
-
-        {/* Summary cards (shown when connected) */}
-        {isConnected && (
           <>
-            <Text style={styles.sectionTitle}>Summary</Text>
+            {/* Summary cards */}
             <View style={styles.summaryRow}>
-              <SummaryCard
-                label="Total Sent"
-                value={transactions?.filter(t => t.type === 'send').length || 0}
-                sublabel="transactions"
-                icon="arrow-up-circle-outline"
-                color={Colors.error}
-              />
-              <SummaryCard
-                label="Total Received"
-                value={transactions?.filter(t => t.type === 'receive').length || 0}
-                sublabel="transactions"
-                icon="arrow-down-circle-outline"
-                color={Colors.success}
-              />
+              <View style={[styles.summaryCard, { borderColor: Colors.success + '40' }]}>
+                <Ionicons name="trending-up" size={20} color={Colors.success} />
+                <Text style={styles.summaryValue}>+{totalWon}</Text>
+                <Text style={styles.summaryLabel}>AGL Earned</Text>
+              </View>
+              <View style={[styles.summaryCard, { borderColor: Colors.primary + '40' }]}>
+                <Ionicons name="game-controller-outline" size={20} color={Colors.primary} />
+                <Text style={styles.summaryValue}>{arenaStats.wins}W / {arenaStats.losses}L</Text>
+                <Text style={styles.summaryLabel}>Arena Record</Text>
+              </View>
+              <View style={[styles.summaryCard, { borderColor: Colors.gold + '40' }]}>
+                <Ionicons name="diamond-outline" size={20} color={Colors.gold} />
+                <Text style={styles.summaryValue}>{aglBalance.toLocaleString()}</Text>
+                <Text style={styles.summaryLabel}>AGL Balance</Text>
+              </View>
             </View>
+
+            {transactions.length === 0 ? (
+              <View style={styles.emptyState}>
+                <View style={styles.emptyIconWrap}>
+                  <Ionicons name="receipt-outline" size={48} color={Colors.primary} />
+                </View>
+                <Text style={styles.emptyTitle}>No Transactions Yet</Text>
+                <Text style={styles.emptySub}>Play Arena matches or send AGL to see history here</Text>
+              </View>
+            ) : (
+              <>
+                {/* Filter pills */}
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.filterRow}
+                >
+                  {TYPE_FILTERS.filter((f) =>
+                    f.key === 'all' || transactions.some((t) => t.type === f.key)
+                  ).map((f) => (
+                    <TouchableOpacity
+                      key={f.key}
+                      style={[styles.filterPill, activeFilter === f.key && styles.filterPillActive]}
+                      onPress={() => setActiveFilter(f.key)}
+                    >
+                      <Text
+                        style={[styles.filterText, activeFilter === f.key && styles.filterTextActive]}
+                      >
+                        {f.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                {/* Transaction list */}
+                <View style={styles.txList}>
+                  {filtered.length === 0 ? (
+                    <View style={styles.emptyFilter}>
+                      <Text style={styles.emptyFilterText}>No {activeFilter} transactions</Text>
+                    </View>
+                  ) : (
+                    filtered.map((tx) => <TxRow key={tx.id} tx={tx} />)
+                  )}
+                </View>
+              </>
+            )}
           </>
         )}
       </ScrollView>
@@ -137,59 +168,47 @@ export default function TransactionsScreen() {
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  sublabel,
-  icon,
-  color,
-}: {
-  label: string;
-  value: number;
-  sublabel: string;
-  icon: React.ComponentProps<typeof Ionicons>['name'];
-  color: string;
-}) {
-  return (
-    <View style={[styles.summaryCard, { borderColor: color + '30' }]}>
-      <Ionicons name={icon} size={24} color={color} />
-      <Text style={styles.summaryValue}>{value}</Text>
-      <Text style={styles.summaryLabel}>{label}</Text>
-      <Text style={styles.summarySublabel}>{sublabel}</Text>
-    </View>
-  );
-}
+// Need React import for useState
+import React from 'react';
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flex: 1 },
-  content: { paddingBottom: Platform.OS === 'web' ? 34 : 20 },
+  content: { paddingBottom: Platform.OS === 'web' ? 34 : 24 },
 
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 12,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  headerTitle: { fontSize: 28, fontWeight: '800', color: Colors.text },
-  filterBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  title: { fontSize: 28, fontWeight: '800', color: Colors.text },
+  countBadge: {
     backgroundColor: Colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.border,
   },
+  countText: { fontSize: 12, color: Colors.textSecondary, fontWeight: '600' },
 
-  emptyState: {
-    marginTop: 60,
+  summaryRow: { flexDirection: 'row', marginHorizontal: 20, gap: 10, marginBottom: 16 },
+  summaryCard: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 14,
     alignItems: 'center',
-    gap: 12,
+    gap: 5,
+    borderWidth: 1,
   },
-  emptyIconContainer: {
+  summaryValue: { fontSize: 14, fontWeight: '800', color: Colors.text },
+  summaryLabel: { fontSize: 10, color: Colors.textMuted, textAlign: 'center' },
+
+  emptyState: { alignItems: 'center', gap: 12, marginTop: 48, paddingHorizontal: 32 },
+  emptyIconWrap: {
     width: 96,
     height: 96,
     borderRadius: 48,
@@ -198,14 +217,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: Colors.text },
-  emptySubtitle: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
+  emptySub: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', lineHeight: 20 },
 
-  loadingState: {
-    marginTop: 60,
-    alignItems: 'center',
-    gap: 16,
+  filterRow: {
+    paddingHorizontal: 20,
+    gap: 8,
+    marginBottom: 12,
   },
-  loadingText: { color: Colors.textSecondary, fontSize: 14 },
+  filterPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  filterPillActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  filterText: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
+  filterTextActive: { color: '#fff' },
 
   txList: {
     marginHorizontal: 20,
@@ -223,49 +252,16 @@ const styles = StyleSheet.create({
     borderBottomColor: Colors.border,
     gap: 12,
   },
-  txIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  txInfo: { flex: 1 },
-  txType: { fontSize: 15, fontWeight: '600', color: Colors.text },
-  txAddress: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  txDate: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
-  txRight: { alignItems: 'flex-end', gap: 6 },
-  txAmount: { fontSize: 15, fontWeight: '600' },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  statusText: { fontSize: 11, fontWeight: '600' },
+  txIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  txBody: { flex: 1 },
+  txLabel: { fontSize: 14, fontWeight: '700', color: Colors.text },
+  txDesc: { fontSize: 12, color: Colors.textMuted, marginTop: 1 },
+  txTime: { fontSize: 11, color: Colors.textMuted, marginTop: 3 },
+  txRight: { alignItems: 'flex-end', gap: 5 },
+  txAmount: { fontSize: 14, fontWeight: '700' },
+  statusBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
+  statusText: { fontSize: 10, fontWeight: '700' },
 
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: Colors.text,
-    marginHorizontal: 20,
-    marginTop: 24,
-    marginBottom: 12,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    marginHorizontal: 20,
-    gap: 12,
-  },
-  summaryCard: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    padding: 20,
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-  },
-  summaryValue: { fontSize: 28, fontWeight: '800', color: Colors.text },
-  summaryLabel: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
-  summarySublabel: { fontSize: 11, color: Colors.textMuted },
+  emptyFilter: { padding: 24, alignItems: 'center' },
+  emptyFilterText: { color: Colors.textMuted, fontSize: 14 },
 });
